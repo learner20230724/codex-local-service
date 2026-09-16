@@ -27,6 +27,7 @@ export interface CodexProxyRequestExtension {
 
 export interface ChatCompletionRequest {
   model?: string;
+  reasoning_effort?: "low" | "medium" | "high" | "xhigh" | "max";
   messages: ChatMessage[];
   stream?: boolean;
   temperature?: number;
@@ -167,6 +168,7 @@ export interface ResponseUsage {
 
 export interface ResponseRequest {
   model?: string;
+  reasoning?: { effort?: "low" | "medium" | "high" | "xhigh" | "max" };
   input: string | ResponseInputItem[];
   stream?: boolean;
   instructions?: string;

@@ -43,6 +43,8 @@ import type {
 // ── Public types ────────────────────────────────────────────────────
 
 export interface CodexSubprocessOptions {
+  /** Per-turn override; omitting this preserves the service default. */
+  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Codex model id, e.g. "gpt-5.5" */
   model: string;
   /** Working directory for the Codex agent */
@@ -354,6 +356,7 @@ export class CodexSubprocess {
         threadId,
         input,
         model: options.model,
+        ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
       }, options.turnStartTimeoutMs || CONFIG.turnStartTimeoutMs);
       trace("subprocess.turn_start.result", { instanceId: this.instanceId, threadId, turnStartResult });
     } catch (err) {

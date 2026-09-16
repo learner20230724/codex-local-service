@@ -146,6 +146,7 @@ sudo systemctl restart codex-proxy.service
 - 多个项目共享一个账户的额度和并发能力，当前没有按项目计量、独立配额或独立密钥；调用方应控制并发、排队和超时。
 - `GET /v1/models` 是上游静态列表，可能遗漏可用的默认模型；以实际推理验证为准。
 - 普通文本、JSON 输出和 SSE 流有兼容实现。工具调用、图像和 Responses 特殊字段需按项目实测；JSON 输出仍应做业务校验。
+- 支持单次请求的推理档位：Chat Completions 的 `reasoning_effort`、Responses 的 `reasoning.effort` 会传到 Codex `turn/start.effort`。未指定的客户端保持服务原有默认档位。日序已用 `gpt-6-astra` + `high` 完成真实调用验证；这不修改全局 Codex 配置。
 - 上游 `usage.cost` 是 API 等价费用估算，不是本机账户实际账单；使用 token 数做调用统计更合适。
 - 登录失效时，在服务用户身份下执行官方 `codex login`。不要从其他项目复制 OAuth token。
 - 保持仅回环监听；当前服务适合可信本机后端复用，不提供公网多租户隔离。

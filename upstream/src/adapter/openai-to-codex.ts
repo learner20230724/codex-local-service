@@ -108,6 +108,7 @@ export function chatRequestToOptions(
     imageUrls,
     options: {
       model,
+      reasoningEffort: req.reasoning_effort || defaults?.reasoningEffort,
       instructions: systemInstruction || defaults?.instructions,
       timeoutMs: defaults?.timeoutMs,
       initTimeoutMs: defaults?.initTimeoutMs,
@@ -143,6 +144,7 @@ export function responsesRequestToOptions(
     imageUrls,
     options: {
       model,
+      reasoningEffort: req.reasoning?.effort || defaults?.reasoningEffort,
       instructions: req.instructions || defaults?.instructions,
       timeoutMs: defaults?.timeoutMs,
       initTimeoutMs: defaults?.initTimeoutMs,
