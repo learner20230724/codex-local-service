@@ -1,0 +1,18 @@
+# Runtime dependencies and generated output
+upstream/node_modules/
+upstream/dist/
+__pycache__/
+*.pyc
+
+# Machine-specific state and deployment records
+.env
+.env.*
+!.env.example
+*.key
+auth.json
+*.log
+.runtime/
+docs/LOCAL.md
+docs/backup-location.txt
+docs/provenance.json
+deploy/codex-proxy.service

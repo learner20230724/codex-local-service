@@ -1,0 +1,4 @@
+interface:
+  display_name: "本机 Codex 反代"
+  short_description: "复用已部署的 Codex 反代公共服务，为新项目配置接入并验证调用"
+  default_prompt: "使用 $local-codex-proxy 为当前项目接入本机已有的 Codex 反代。"

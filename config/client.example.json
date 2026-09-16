@@ -1,0 +1,11 @@
+{
+  "base_url": "http://127.0.0.1:3467/v1",
+  "model": "gpt-6-astra",
+  "api_key_file": "/etc/codex-proxy/proxy.key",
+  "timeout_seconds": 245,
+  "service": "codex-proxy.service",
+  "pool_max": 2,
+  "node_bin": "/usr/bin/node",
+  "codex_bin": "/usr/local/bin/codex",
+  "work_dir": "/var/lib/codex-proxy/inference"
+}

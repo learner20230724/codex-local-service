@@ -1,0 +1,80 @@
+#!/usr/bin/python3
+"""Inspect/check the shared proxy or inject credentials into a child process."""
+import argparse
+import json
+import os
+from pathlib import Path
+import sys
+import time
+import urllib.error
+import urllib.request
+
+CONFIG = Path('/etc/codex-proxy/client.json')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=['info', 'check', 'smoke', 'run'])
+    parser.add_argument('command', nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    config = json.loads(CONFIG.read_text())
+    if args.action == 'info':
+        print(json.dumps(config, ensure_ascii=False, indent=2))
+        return
+    key = Path(config['api_key_file']).read_text().strip()
+    if not key:
+        raise ValueError('Local proxy credential is empty.')
+    if args.action == 'run':
+        command = args.command
+        if command and command[0] == '--':
+            command = command[1:]
+        if not command:
+            parser.error('run requires a command: codex-proxyctl run -- python app.py')
+        env = os.environ.copy()
+        env.update(OPENAI_BASE_URL=config['base_url'], OPENAI_API_KEY=key,
+                   OPENAI_MODEL=config['model'], CODEX_PROXY_BASE_URL=config['base_url'],
+                   CODEX_PROXY_MODEL=config['model'], CODEX_PROXY_API_KEY_FILE=config['api_key_file'])
+        for name in ['NO_PROXY', 'no_proxy']:
+            values = [v for v in env.get(name, '').split(',') if v]
+            env[name] = ','.join(dict.fromkeys(values + ['localhost', '127.0.0.1', '::1']))
+        os.execvpe(command[0], command, env)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    start = time.monotonic()
+    if args.action == 'check':
+        url, data, timeout = config['base_url'].removesuffix('/v1') + '/health', None, 10
+    else:
+        url = config['base_url'] + '/chat/completions'
+        data = json.dumps({'model': config['model'], 'stream': False,
+                           'messages': [{'role': 'user', 'content': 'Reply exactly CODEX_PROXY_OK. Do not use tools.'}]}).encode()
+        timeout = config['timeout_seconds']
+    req = urllib.request.Request(url, data=data,
+                                 headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'})
+    with opener.open(req, timeout=timeout) as response:
+        result = json.load(response)
+    if args.action == 'check':
+        if result.get('status') != 'ok':
+            raise ValueError('Unexpected health response.')
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+        if content.strip() != 'CODEX_PROXY_OK' or result.get('error'):
+            raise ValueError('Inference did not return the expected smoke-test response.')
+        usage = result.get('usage', {})
+        print(json.dumps({'ok': True, 'model': result.get('model'), 'reply': content,
+                          'seconds': round(time.monotonic() - start, 2),
+                          'tokens': {k: usage.get(k) for k in ['prompt_tokens', 'completion_tokens', 'total_tokens']}},
+                         ensure_ascii=False, indent=2))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except urllib.error.HTTPError as exc:
+        print(f'Proxy returned HTTP {exc.code}.', file=sys.stderr)
+        sys.exit(1)
+    except PermissionError:
+        print('Credential access denied; use the service identity or systemd LoadCredential.', file=sys.stderr)
+        sys.exit(1)
+    except (OSError, ValueError, KeyError) as exc:
+        print(f'Proxy operation failed ({type(exc).__name__}); check configuration and service status.', file=sys.stderr)
+        sys.exit(1)

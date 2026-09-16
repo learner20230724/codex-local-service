@@ -1,0 +1,21 @@
+[Unit]
+Description=Shared local Codex inference API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+WorkingDirectory=/var/lib/codex-proxy/inference
+Environment=HOME=@HOME@
+Environment=PATH=@PATH@
+Environment=NO_PROXY=localhost,127.0.0.1,::1
+@EGRESS_ENV@
+ExecStart=/usr/bin/python3 @PREFIX@/scripts/serve.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
