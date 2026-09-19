@@ -62,7 +62,7 @@ def main():
     else:
         url = config['base_url'] + '/chat/completions'
         data = json.dumps({'model': config['model'], 'stream': False,
-                           'messages': [{'role': 'user', 'content': 'Reply exactly CODEX_PROXY_OK. Do not use tools.'}]}).encode()
+                           'messages': [{'role': 'user', 'content': 'Reply exactly CODEXPROXYOK. Do not use tools.'}]}).encode()
         timeout = config['timeout_seconds']
     headers = {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}
     if args.action == 'smoke' and args.command:
@@ -84,7 +84,7 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
-        if content.strip() != 'CODEX_PROXY_OK' or result.get('error'):
+        if content.strip() != 'CODEXPROXYOK' or result.get('error'):
             raise ValueError('Inference did not return the expected smoke-test response.')
         usage = result.get('usage', {})
         print(json.dumps({'ok': True, 'model': result.get('model'), 'backend': backend, 'fallback': fallback, 'reply': content,

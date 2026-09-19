@@ -7,6 +7,39 @@ import subprocess
 
 root = Path(__file__).resolve().parents[1]
 
+def patch_browser_worker(text):
+    replacements = [
+        ('    // Launcher verification refreshes its owned page before attaching Playwright so a newly added',
+         '    observePageFailures(page);\n    // Launcher verification refreshes its owned page before attaching Playwright so a newly added'),
+        ('import { loginVerificationMarkerPath } from "../../browser-login";',
+         'import { loginVerificationMarkerPath, sanitizeBrowserLoginStorageState } from "../../browser-login";'),
+        ('        const state = await this.context.storageState();',
+         '        const state = sanitizeBrowserLoginStorageState(await this.context.storageState());'),
+        ('  private browser?: Browser;', '  private browser?: Browser;\n  private localBrowserClose?: () => Promise<void>;'),
+        ('    if (browser) await browser.close();',
+         '    const close = this.localBrowserClose; this.localBrowserClose = undefined;\n'
+         '    if (close) await close(); else if (browser) await browser.close();'),
+        ('''    this.browser = await chromium.launch({
+      executablePath: this.config.chromeExecutablePath,
+      headless: !this.config.headed,
+    });
+    this.context = await this.browser.newContext({ storageState: this.config.storageStatePath });''',
+         '''    const owned = await openOwnedBrowser(this.config.chromeExecutablePath, process.env.CODEX_WEB_BROWSER_PROFILE || "");
+    this.browser = owned.browser; this.context = owned.context; this.localBrowserClose = owned.close;'''),
+        ('''      const browser = await chromium.launch({
+        executablePath: this.config.chromeExecutablePath,
+        headless: !this.config.headed,
+      });
+      const context = await browser.newContext({ storageState: this.config.storageStatePath });''',
+         '''      const owned = await openOwnedBrowser(this.config.chromeExecutablePath, process.env.CODEX_WEB_BROWSER_PROFILE || "");
+      const { browser, context } = owned; this.localBrowserClose = owned.close;'''),
+    ]
+    for before, after in replacements:
+        if text.count(before) != 1:
+            raise SystemExit('Pinned owned-browser patch no longer matches upstream. Inspect before upgrading.')
+        text = text.replace(before, after)
+    return 'import { openOwnedBrowser } from "./local-browser-host";\n' + text
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bun', default='/opt/codex-proxy-web/bin/bun')
@@ -23,8 +56,10 @@ def main():
     anchor = '    await assertTemporaryChatPage(page);'
     if text.count(anchor) != 1:
         raise SystemExit('Pinned privacy patch no longer matches upstream. Inspect before upgrading.')
-    worker.write_text('import { ensureUnpersonalized } from "./local-privacy";\n' + text.replace(anchor, anchor+'\n    await ensureUnpersonalized(page);'))
+    worker.write_text(patch_browser_worker('import { ensureUnpersonalized, observePageFailures } from "./local-privacy";\n' + text.replace(anchor, anchor+'\n    await ensureUnpersonalized(page);')))
     shutil.copyfile(root/'web/privacy.ts', target/'src/adapters/chatgpt-web/local-privacy.ts')
+    host = (root/'web/browser-host.ts').read_text().replace('../.runtime/web/node_modules/playwright-core/index.mjs', 'playwright-core')
+    (target/'src/adapters/chatgpt-web/local-browser-host.ts').write_text(host)
     adapter = target/'src/adapters/chatgpt-web/index.ts'
     text = adapter.read_text()
     anchor = '  const warning = chatGptReadOnlyContextWarning(parsed, capabilities);'

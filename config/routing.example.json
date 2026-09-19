@@ -1,7 +1,7 @@
 {
   "mode": "auto",
   "web_base_url": "http://127.0.0.1:3468",
-  "web_model": "chatgpt-web/high",
+  "web_model": "chatgpt-web/light",
   "web_timeout_ms": 120000,
   "cooldown_seconds": 60
 }

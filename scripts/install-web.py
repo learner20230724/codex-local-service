@@ -18,7 +18,7 @@ def main():
     parser.add_argument('--user', required=True)
     parser.add_argument('--bun', required=True, help='Verified Bun 1.4.0 executable')
     parser.add_argument('--chrome', required=True, help='Chrome/Chromium executable')
-    parser.add_argument('--login-chrome', help='Optional supported stable Chrome executable for manual account login')
+    parser.add_argument('--login-chrome', help='Optional stable Chrome shared by manual login and subsequent inference')
     parser.add_argument('--egress-proxy', default='')
     args = parser.parse_args()
     if os.geteuid() != 0:

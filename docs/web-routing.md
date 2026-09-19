@@ -29,9 +29,12 @@ codex-proxyctl smoke codex      # 必须由 Codex 成功回答
 
 已有部署未安装 routing.json 时仍为 Codex 模式。安装网页通道后采用 auto。默认模型请求可自动路由；明确指定其他 Codex 模型继续走 Codex。明确指定 `chatgpt-web/*` 的请求不偷偷切成 Codex。网页模式响应包含实际网页模型名，以及 `X-Codex-Proxy-Backend` / `X-Codex-Proxy-Model`；备用响应还包含 `X-Codex-Proxy-Fallback`。网页 High 与 Codex 模型不是等价型号。
 
+默认网页档位为 `chatgpt-web/light`。这是首次实机正常完成回答的档位；High 在该次测试中超过 120 秒预算，不能据此判断账户是否缺少额度。调用方仍可明确选择网页模型或 reasoning effort；超时和错误遵循相同回退规则。
+
 ## 切换边界
 
 - 支持普通文本的 Chat Completions、Responses、JSON 输出和 SSE。完整对话历史由调用方每次传入。系统提示词、角色与历史会转换到 Responses。
+- 网页回答从渲染后的内容还原为 Markdown，可能包含字面下划线等字符的转义；不承诺与网页底层文本逐字节相同。健康推理使用纯字母标记，避免把 Markdown 转义误判为请求失败。
 - 工具、图像、音频、后台任务和仅有 `previous_response_id` 的增量请求不交给网页通道；auto 保留原 Codex 行为，web 模式返回明确错误。不宣称全部 API 字段等价。
 - 单次推理档位映射到明确网页模式：low→light、medium→medium、high→high、xhigh→extra-high、max→pro；模型必须在网页账号实际可用。
 - 网页健康/登录检查失败、额度限制、服务故障或超时可以转 Codex；请求本身的 400 错误不会通过切换重试。
@@ -42,7 +45,7 @@ codex-proxyctl smoke codex      # 必须由 Codex 成功回答
 
 ## 无桌面 Linux 与首次登录
 
-使用 Linux x64、Bun 1.4.0、Chromium/Chrome、Xvfb。浏览器必须运行，但不需要完整桌面或物理显示器。首次由用户在专用普通浏览器完成登录，登录期间不启动 Playwright 或调试连接；不读取现有 Codex `auth.json`。建议使用 Google 官方稳定版 Chrome 进行 Google 联合登录，`web.json` 的 `login_chrome_bin` 可与推理用的 `chrome_bin` 分别配置，省略时复用后者。
+使用 Linux x64、Bun 1.4.0、Chromium/Chrome、Xvfb。浏览器必须运行，但不需要完整桌面或物理显示器。首次由用户在专用普通浏览器完成登录，登录期间不启动 Playwright 或调试连接；不读取现有 Codex `auth.json`。建议使用 Google 官方稳定版 Chrome。绑定完成后的推理复用同一个专用资料目录和浏览器版本，优先使用 `web.json` 的 `login_chrome_bin`，省略时使用 `chrome_bin`。
 
 1. `git submodule update --init --recursive` 取得固定源码。
 2. 安装 Bun、Chromium、Xvfb 与浏览器所需系统库；下载二进制时核对其发布 SHA-256。准备的 Chromium 可执行文件可通过包装脚本加入本机出站代理。
@@ -51,7 +54,7 @@ codex-proxyctl smoke codex      # 必须由 Codex 成功回答
 5. 用 `deploy/codex-proxy-web.service.in` 生成 systemd 单元。填入用户、项目路径、出站代理；无代理时环境变量留空。确认 `:97` 虚拟显示未被占用；需要改显示号时同步修改维护连接。
 6. 构建主代理 `cd upstream && npm ci --ignore-scripts && npm run build`。启动并启用网页服务，在无在途推理时重启主代理。
 7. 执行 `codex-proxyctl web-login`。通过 SSH 隧道或受认证 HTTPS 的临时 noVNC 维护入口操作该虚拟屏幕。VNC、调试与网页推理端口始终只在本机监听；不能公开无认证的登录窗口。
-8. 手动登录并看到 ChatGPT 聊天页后，关闭这个专用 Chrome 窗口，或执行 `codex-proxyctl web-login-finish`。程序先结束人工登录浏览器，再离线提取这个专用 profile 的 ChatGPT/OpenAI 状态，排除 Google cookies，随后验证 ChatGPT 服务端登录状态、临时聊天、非个性化和账号模型能力。等待登录时不监视密码输入；单纯打开浏览器不算登录成功。窗口 30 分钟超时关闭，验证最多 120 秒。用 `web-status` 确认 ready，再分别进行 web / auto / codex 真实调用。
+8. 手动登录并看到 ChatGPT 聊天页后，关闭这个专用 Chrome 窗口，或执行 `codex-proxyctl web-login-finish`。程序先结束人工登录浏览器，再以相同专用 profile 启动普通 Chrome，通过回环地址的临时 CDP 连接验证 ChatGPT 服务端登录状态、临时聊天、非个性化和账号模型能力。兼容状态文件仅导出 ChatGPT/OpenAI 数据，排除 Google cookies；完整浏览器资料始终留在私有目录。等待登录时不监视密码输入；单纯打开浏览器不算登录成功。窗口 30 分钟超时关闭，验证最多 120 秒。用 `web-status` 确认 ready，再分别进行 web / auto / codex 真实调用。
 
 对于已经安装主代理且准备好运行时的机器，第 3–5 步可以一次执行（拒绝覆盖已有网页配置）：
 
@@ -69,7 +72,9 @@ sudo python3 scripts/install-web.py --user ubuntu \
 
 若 Google 报 “This browser or app may not be secure”，参考 [Google 支持的浏览器说明](https://support.google.com/accounts/answer/7675428?hl=en)。初版集成的 Playwright 登录窗口已替换为普通人工 Chrome。不要反复重试自动化登录，也不要关闭账号验证；如果普通浏览器仍被拒绝，需要按账号提供方提示处理受支持浏览器、网络或账号验证问题。登录时必须继续使用原账号的登录方式。
 
-登录成功后仍可能遇到对话接口的网页验证。日志中的 `codex_web.http_failure` 仅记录请求类别、状态、响应类型和是否被挑战，不记录正文、凭据或账号标识；`challenge: true` 时先由用户在普通浏览器验证能否正常发消息。不要把网页登录成功或 `web-status.ready` 等同于网页推理通过。发送时的 `codex_web.privacy_request` 只记录可观察到的临时/禁用历史布尔标记，不记录请求内容。
+登录成功后仍可能遇到对话接口的网页验证。日志中的 `codex_web.http_failure` 仅记录请求类别、状态、响应类型和是否被挑战，不记录正文、凭据或账号标识；`challenge: true` 时会在填写提示词之前最多刷新一次页面；不会在发送后重投。持续失败时再由用户在普通浏览器验证能否正常发消息。不要把网页登录成功或 `web-status.ready` 等同于网页推理通过。发送时的 `codex_web.privacy_request` 只记录可观察到的临时/禁用历史布尔标记，不记录请求内容。
+
+本机实测发现：相同账号的普通 Chrome 可对话，但将登录状态导入新建的 Playwright 浏览器会收到验证拦截。因此推理现使用 `web/browser-host.ts` 管理的普通 Chrome，保留专用 profile，并在登录结束后连接；不修改网页指纹、不自动点击验证码。调试端口动态选择且只监听 `127.0.0.1`，每个任务结束后先正常保存并关闭 Chrome，再确认进程退出。不要暴露调试端口，也不要将这个 profile 用于其他网站日常浏览。
 
 仓库提供 `deploy/codex-proxy-web-vnc.service.in` 与 `deploy/codex-proxy-web-login.service.in` 模板（需要 x11vnc/noVNC/websockify），默认均只监听回环且 30 分钟到期。可用 SSH 本地转发访问 6087；使用 Caddy 时必须将整个 noVNC 静态目录和 WebSocket 路径一起置于已有 HTTPS 认证之后。登录结束后停止两个维护单元。浏览器状态只存服务用户私有目录，不能将 profile 或 storage-state 放到网页目录。
 

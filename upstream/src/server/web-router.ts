@@ -13,7 +13,7 @@ export interface RoutingSettings {
   cooldown_seconds: number;
 }
 const defaults: RoutingSettings = {
-  mode: "codex", web_base_url: "http://127.0.0.1:3468", web_model: "chatgpt-web/high",
+  mode: "codex", web_base_url: "http://127.0.0.1:3468", web_model: "chatgpt-web/light",
   web_timeout_ms: 120000, cooldown_seconds: 60,
 };
 function settings(): RoutingSettings {

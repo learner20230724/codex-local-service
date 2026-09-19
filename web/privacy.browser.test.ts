@@ -1,6 +1,6 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { chromium } from "../.runtime/web/node_modules/playwright-core/index.mjs";
-import { ensureUnpersonalized } from "./privacy";
+import { ensureUnpersonalized, observePageFailures } from "./privacy";
 
 const chrome = process.env.CODEX_WEB_TEST_CHROME;
 let browser: any;
@@ -52,3 +52,39 @@ test.skipIf(!chrome)("ambiguous privacy choices fail without touching an unrelat
     expect(await page.evaluate(() => (window as any).unrelatedClicked)).toBeUndefined();
   } finally { await page.close(); }
 }, 12000);
+test.skipIf(!chrome)("pre-send challenge refresh runs at most once and checks privacy again", async () => {
+  const page = await browser.newPage(); let documents = 0;
+  observePageFailures(page);
+  await page.route("**/*", (route: any) => {
+    if (route.request().url().includes("/backend-api/")) return route.fulfill({ status: 403,
+      headers: { "cf-mitigated": "challenge", "content-type": "text/html" }, body: "Verification needed" });
+    documents++;
+    return route.fulfill({ contentType: "text/html", body: '<div id="prompt-textarea" contenteditable="true"></div><button>Unpersonalized</button><script>fetch("/backend-api/me")</script>' });
+  });
+  try {
+    const challenge = page.waitForResponse((response: any) => response.url().includes('/backend-api/') && response.status() === 403, { timeout: 5000 });
+    await page.goto("https://chatgpt.com/?temporary-chat=true");
+    await challenge;
+    await ensureUnpersonalized(page, { noticeWaitMs: 100 });
+    expect(documents).toBe(2);
+    expect(await page.locator('#prompt-textarea').textContent()).toBe("");
+    expect(await page.getByRole("button", { name: "Unpersonalized", exact: true }).isVisible()).toBe(true);
+  } finally { await page.close(); }
+}, 10000);
+test.skipIf(!chrome)("challenge on an already submitted conversation never reloads the page", async () => {
+  const page = await browser.newPage(); let documents = 0;
+  observePageFailures(page);
+  await page.route("**/*", (route: any) => {
+    if (route.request().url().includes("/backend-api/")) return route.fulfill({ status: 403,
+      headers: { "cf-mitigated": "challenge", "content-type": "text/html" }, body: "Verification needed" });
+    documents++;
+    return route.fulfill({ contentType: "text/html", body: '<div data-message-author-role="user">Already sent</div><button>Unpersonalized</button><script>fetch("/backend-api/me")</script>' });
+  });
+  try {
+    const challenge = page.waitForResponse((response: any) => response.url().includes('/backend-api/') && response.status() === 403, { timeout: 5000 });
+    await page.goto("https://chatgpt.com/?temporary-chat=true");
+    await challenge;
+    await expect(ensureUnpersonalized(page, { noticeWaitMs: 100 })).rejects.toThrow("web_verification_after_submission");
+    expect(documents).toBe(1);
+  } finally { await page.close(); }
+}, 10000);

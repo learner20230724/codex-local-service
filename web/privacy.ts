@@ -1,13 +1,15 @@
 /** Require a verified non-personalized Temporary Chat; never save or edit global settings. */
-const observedPages = new WeakSet<object>();
-function observePageFailures(page: any) {
+const observedPages = new WeakMap<object, { challenged: boolean }>();
+export function observePageFailures(page: any) {
   if (typeof page.on !== "function" || observedPages.has(page)) return;
-  observedPages.add(page);
+  const observed = { challenged: false };
+  observedPages.set(page, observed);
   page.on("response", (response: any) => {
     const url = new URL(response.url());
     if (url.origin !== "https://chatgpt.com" || !url.pathname.startsWith("/backend-api/") || response.status() < 400) return;
     const category = url.pathname.includes("conversation") ? "conversation" : url.pathname.includes("accounts") ? "account" : "backend";
     const headers = response.headers();
+    if (headers["cf-mitigated"] === "challenge") observed.challenged = true;
     console.warn(JSON.stringify({ event: "codex_web.http_failure", category, status: response.status(),
       content_type: headers["content-type"], challenge: headers["cf-mitigated"] === "challenge" }));
   });
@@ -34,13 +36,24 @@ async function dismissTemporaryChatNotice(page: any, waitMs = 0): Promise<boolea
   await dialog.waitFor({ state: "hidden", timeout: 5000 });
   return true;
 }
-export async function ensureUnpersonalized(page: any, options: { noticeWaitMs?: number } = {}): Promise<void> {
+export async function ensureUnpersonalized(page: any, options: { noticeWaitMs?: number; refreshAfterChallenge?: boolean } = {}): Promise<void> {
   const url = new URL(page.url());
   if (url.origin !== "https://chatgpt.com" || url.pathname !== "/" || url.searchParams.get("temporary-chat") !== "true")
     throw new Error("temporary_chat_required");
   observePageFailures(page);
   // ChatGPT hydrates this notice after rendering the composer and privacy label.
   await dismissTemporaryChatNotice(page, options.noticeWaitMs ?? 5000);
+  if (options.refreshAfterChallenge !== false && observedPages.get(page)?.challenged) {
+    // Match the upstream launcher's one-refresh recovery, strictly before prompt attachment.
+    // Never reload or resubmit a turn after any user message has been sent.
+    if (await page.locator('[data-message-author-role="user"]').count() > 0)
+      throw new Error("web_verification_after_submission");
+    observedPages.get(page)!.challenged = false;
+    console.info(JSON.stringify({ event: "codex_web.session_refresh", reason: "backend_challenge" }));
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.locator('#prompt-textarea,[data-testid="prompt-textarea"]').first().waitFor({ state: "visible", timeout: 20000 });
+    return ensureUnpersonalized(page, { ...options, refreshAfterChallenge: false });
+  }
   const off = page.getByRole("button", { name: /^(Unpersonalized|非个性化)$/, exact: true, includeHidden: true }).filter({ visible: true });
   if (await off.isVisible().catch(() => false)) return;
   const on = page.getByRole("button", { name: /^(Personalized|个性化)$/, exact: true, includeHidden: true }).filter({ visible: true });

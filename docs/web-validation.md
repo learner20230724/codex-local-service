@@ -1,56 +1,67 @@
 # 当前集成验证记录
 
-2026-09-20，Linux x64，单网页任务，固定上游 5.0.8。
+2026-09-20，Linux x64，单网页任务，固定上游 5.0.8，官方 Chrome 153.0.8010.52。
 
-## 已通过
+## 自动化验证
 
-- 主代理构建与 147 项自动化测试，包括网页优先、缺失登录、额度错误、超时取消、单任务并发溢出、流式中断和配置软链接的持久化切换。网页响应在这些路由测试中使用模拟数据。
-- Bun 适配契约、隐私保护与人工登录生命周期的 13 项测试；浏览器桥接代码打包检查；Python 脚本语法检查。其中 4 项使用独立 Chrome 和本地 HTML 夹具，覆盖新版原生临时聊天弹窗、延迟渲染、拒绝未知弹窗及拒绝歧义选项。测试浏览器不使用账号状态。
-- 普通 API 的字符串输入和完整历史转换为上游要求的消息 ID、当前用户消息归属和独立 turn/thread ID。契约测试调用真实的上游身份、会话键和当前用户消息解析器；工具权限仍关闭。
-- 已部署服务的 `auto → codex → auto` 切换与持久化。
-- 真实 Codex 推理：auto 在 `web_login_required` 时回退成功；Responses JSON 和 Chat Completions SSE 均成功，响应头表明实际后端为 Codex。
-- 无密钥访问被拒绝；携带 Origin 的直接访问被拒绝；推理与维护服务端口仅在回环地址监听。
-- 用户已通过普通 Chrome 完成 Google/ChatGPT 登录；网页自己的 `/backend-api/me` 返回有效账号，临时聊天、非个性化状态均实际验证通过。模型菜单实际显示 5 档，含 High、Extra High、Pro；这不代表已验证各档剩余额度。
-- 实际网页调用已完成创建临时页面、选模、附加文本等阶段；发送阶段的拦截见下文。
+- 主代理构建与 **147 项测试通过**，包括网页优先、缺失登录、额度错误、超时取消、并发溢出、流式中断和配置软链接的持久化切换。这部分网页响应使用模拟数据。
+- 浏览器桥接、请求契约和人工登录生命周期的 **17 项测试通过**。真实浏览器测试使用全新空白资料目录及本地 HTML，不使用账号状态，覆盖临时聊天说明、隐私选项、一次刷新上限、会话保存、Chrome 退出和 CDP 只监听回环地址。
+- Bun 桥接打包、Python 脚本语法及固定上游补丁锚点检查通过。
+- 普通 API 输入补齐上游要求的消息/轮次标识，完整历史保留角色与内容；工具权限仍关闭。
 
-## 首次资源采样
+## 真实接口验证
 
-采样 30 秒，网页处于**首次登录等待状态**，没有执行网页模型推理。统计来自 systemd 服务完整 cgroup，CPU 百分比相对于一个逻辑 CPU。
+以下请求访问部署后的公共代理入口，使用真实网页账号或现有 Codex；以返回的实际后端与完成事件为准。
 
-| 服务 | 采样结束内存 | 采样峰值 | 本次服务生命周期峰值 | 平均 CPU |
-| --- | ---: | ---: | ---: | ---: |
-| 网页桥接 + Xvfb + Chromium | 671.1 MiB | 671.7 MiB | 695.7 MiB | 1.27% |
-| 主代理 | 113.8 MiB | 117.6 MiB | 118.5 MiB | 3.50% |
+| 场景 | 实际结果 | 用时 |
+| --- | --- | ---: |
+| auto / Chat Completions JSON | 网页 Light，精确返回 CODEXPROXYOK | 17.56 秒 |
+| auto / Responses SSE，带入多轮完整历史 | 网页 Light，正确返回先前轮次的暗号，收到 completed | 17.82 秒 |
+| 强制网页 / Chat Completions SSE，刷新修正后 | 网页 Light，精确返回 WEBSTREAMOK，流正常结束 | 26.28 秒 |
+| 强制网页 / Responses JSON，字符串输入 | 网页 Light，精确返回 WEBRESPONSESOK，status=completed | 28.01 秒 |
+| 网页槽位占用时第二个 auto 请求 | Codex，fallback=web_busy，精确返回 CODEXPROXYOK | 6.08 秒 |
+| 网页发送被验证拦截 | Codex，fallback=upstream_server_error，流式答案完成 | 21.16 秒 |
+| 后续冷却期请求 | Codex，fallback=web_cooldown，答案正常 | 6.40 秒 |
 
-主代理在该时段还承担了验证请求。临时 noVNC / x11vnc 维护服务属于另外的进程组，不包含在网页服务这行中。
+Responses 非流式网页请求也实际完成。首次精确标记检查使用下划线，返回值被 DOM→Markdown 转义，因此该次不能计为逐字节相等；烟雾测试现使用纯字母标记。这是网页文本转换的兼容性边界，不表示请求走了 Codex。
 
-## 已登录后的发送尝试与资源
+发送前一次刷新部署后，Chat Completions SSE 与 Responses JSON 均通过强制网页复核；未用 Codex 回答冒充网页成功。
 
-登录和推理均使用官方 Chrome 153.0.8010.52。一次 High 调用从浏览器启动运行到发送失败，采样 60.02 秒：网页服务采样峰值 **672.0 MiB**，systemd 记录的本次服务生命周期峰值 **711.6 MiB**，浏览器释放后 **157.6 MiB**，平均 CPU **32.98%**（相对于一个逻辑 CPU）。此时临时 VNC 服务已关闭。
+## 临时聊天与账号历史
 
-这些是**启动、选模与失败发送尝试**的资源数据，包含服务 cgroup 的内存记账及缓存，不能称作成功回答时的稳定开销，也不能据此推算多路并发能力。
+用户已在普通 Chrome 完成登录和手动对话。网页自身的 `/backend-api/me` 返回有效账号，临时聊天和非个性化状态实际验证通过；已完成网页请求记录到 `history_and_training_disabled: true`。每次请求创建独立临时聊天，带入调用方提供的完整历史。
 
-## 当前外部阻塞与待验收项
+真实测试前后的普通历史列表对比完成：**返回列表未出现新增会话，账户历史总数不变**。比较仅保存会话 ID 的单向摘要，不输出标题、对话内容或账号信息。这是本次测试窗口的结果，后续仍依靠每次发送前的临时/非个性化检查。
 
-实际网页页面的对话/后端请求返回 HTTP **403**、`Content-Type: text/html`、`cf-mitigated: challenge`，表明遇到了 [Cloudflare 验证页面](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/challenge-pages/detect-response/)。页面同时出现“Failed to load subscription”；这不能直接解释为账号没订阅或额度用完。已经停止主动自动重试，并让账号所有者在普通 Chrome 中手动发送一句测试，区分普通浏览器/服务器网络问题和自动化会话问题。
+维护 VNC/noVNC 已关闭，临时 HTTPS 登录路由已移除；推理接口保留原有 Bearer 鉴权、Origin 拒绝和回环监听。浏览器资料、导出状态、诊断均留在私有目录，不进入仓库。
 
-截至此记录，**尚未得到成功的网页模型回答**。网页 SSE、多轮完整历史、成功对话的资源峰值及账号侧普通历史无新增均未通过真实验收。临时/非个性化状态检查已实测，但不能替代这些验收；Codex 回退成功也不能计为网页成功。`web-status.ready` 表示登录资料和桥接进程准备好，不保证网站接受推理请求。
+## 成功回答期间的资源
 
-人工验证后再运行 `codex-proxyctl web-login-finish`、`smoke web`、`smoke auto`、`smoke codex`，用实际客户端检查 Responses / SSE / 多轮完整历史，并在网页推理期间采样资源。人工窗口尚在输入时不得提前执行 finish。
+统计来自 systemd 完整 cgroup，包含 Bun、Xvfb、Chrome 和文件缓存；CPU 百分比相对于一个逻辑 CPU。VNC/noVNC 均关闭。
+
+| 成功网页调用 | 网页采样峰值 | 结束后网页服务内存 | 平均 CPU |
+| --- | ---: | ---: | ---: |
+| Chat Completions JSON / Light | 870.1 MiB | 205.4 MiB | 104.42% |
+| Responses SSE + 多轮历史 / Light | 820.5 MiB | 196.8 MiB | 103.20% |
+
+采样周期约 18.3 秒，间隔 1 秒，可能漏掉更短的峰值。同期 systemd 生命周期峰值为 994.9 MiB，包含先前 High 失败尝试，不能将它单独归因于 Light。Chrome 在请求结束后正常保存状态并退出，网页服务无需一直保留完整浏览器进程。单路已验证；没有宣称多路网页并发能力。
+
+## 已处理的问题与保留边界
+
+普通 Chrome 手动对话成功，但将登录状态导入新 Playwright 浏览器会遇到 HTTP 403、`cf-mitigated: challenge`，即 [Cloudflare 验证页面](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/challenge-pages/detect-response/)。现改为保留专用普通 Chrome profile，在人工登录结束后才连接回环 CDP，验证与推理使用同一版本。正常关闭 Chrome 以保存会话；不会修改网页指纹或自动点击验证码。
+
+网站仍可能间歇性挑战某些请求，不能承诺网页通道比 Codex 更稳定。已补入原项目启动器采用的发送前一次页面刷新；它发生在填写提示词之前，发送后不刷新重投。持续失败遵循自动回退与 60 秒冷却，不把两个后端的答案拼接起来。
+
+本机 High 在 120 秒内未完成，因此默认改为已成功回答的 Light；High、Extra High、Pro 的剩余额度与长期可用性没有得到验证。模型菜单可见不等于已通过推理验收。网页内容由 DOM 还原 Markdown，不保证原始字节一致；工具、图像及增量 previous_response_id 请求按原有路由限制处理。
 
 自动化命令：
 
 ```bash
+npm run build --prefix upstream
 npm test --prefix upstream
-CODEX_WEB_TEST_CHROME=/path/to/chrome bun test web/contract.test.ts web/manual-login.test.ts web/privacy.browser.test.ts
+xvfb-run -a env CODEX_WEB_TEST_CHROME=/path/to/chrome bun test web/*.test.ts
 bun build web/bridge.ts --target=bun --outdir /tmp/codex-web-build-check
 python3 -m py_compile scripts/*.py scripts/codex-proxyctl
 ```
 
-全新机器的完整安装器尚未在第二台干净主机验收；当前机器按相同配置约定分步部署。
-
-## 人工登录修正
-
-用户首次 Google 登录出现“不安全浏览器”提示。旧窗口由 Playwright 连接；改为独立启动官方稳定版 Chrome 153.0.8010.52，用户完成登录后才进行离线状态捕获与 ChatGPT 验证。安装包按 Google 签名的仓库索引及 SHA-256 校验。实机进程参数已确认没有自动化、远程调试、无头或禁用沙箱参数；登录页面 HTTP 200，维护 WebSocket 已收到 VNC 协议握手，公网入口仍要求认证。真实 Codex 回退在改动后再次成功。
-
-普通 Chrome 登录已由用户完成并通过验证。随后补充兼容新版延迟渲染的临时聊天说明，且观察网页自身的认证请求，避免额外 `/api/auth/session` 探测被挑战时误判为登录失效。当前阻塞已转为上述网页对话请求的 Cloudflare 验证。
+全新机器安装器尚未在第二台干净主机验收；当前机器按同一配置约定分步部署。

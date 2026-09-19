@@ -1,24 +1,24 @@
 /** Private single-slot browser-only service. No Codex login/configuration or native tools. */
-import { readFileSync, mkdirSync, rmSync } from "node:fs";
+import { readFileSync, mkdirSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
-import { chromium } from "../.runtime/web/node_modules/playwright-core/index.mjs";
 import { defaultConfig, atomicWriteFile } from "../.runtime/web/src/config";
 import { responseRequest } from "../.runtime/web/src/server";
 import { browserLoginStateExists, loginVerificationMarkerPath, storedBrowserLoginCapabilities, sanitizeBrowserLoginStorageState } from "../.runtime/web/src/browser-login";
 import { detectChatGptAccountCapabilities, CHATGPT_TEMPORARY_CHAT_URL } from "../.runtime/web/src/chatgpt-session";
 import { closeChatGptBrowserWorkers, dismissChatGptTemporaryChatOnboarding } from "../.runtime/web/src/adapters/chatgpt-web/browser-worker";
 import { chatGptTurnSessions } from "../.runtime/web/src/adapters/chatgpt-web/turn-execution";
-import { ensureUnpersonalized } from "./privacy";
+import { ensureUnpersonalized, observePageFailures } from "./privacy";
 import { ManualLogin } from "./manual-login";
 import { prepareBrowserRequest } from "./request";
+import { openOwnedBrowser } from "./browser-host";
 
 const client = JSON.parse(readFileSync("/etc/codex-proxy/client.json", "utf8"));
 const key = readFileSync(client.api_key_file, "utf8").trim();
 const stateDir = process.env.CODEX_CHATGPT_WEB_HOME || "/var/lib/codex-proxy/web";
 mkdirSync(stateDir, { recursive: true, mode: 0o700 });
 const config = { ...defaultConfig("browser-only"),
-  chromeExecutablePath: process.env.CODEX_WEB_CHROME || "/opt/codex-proxy-web/bin/chrome",
+  chromeExecutablePath: process.env.CODEX_WEB_LOGIN_CHROME || process.env.CODEX_WEB_CHROME || "/opt/codex-proxy-web/bin/chrome",
   storageStatePath: join(stateDir, "browser", "storage-state.json"),
   headed: true, mode: "browser-only" as const, browserHost: "managed-chrome" as const,
   autoApproveToolCalls: false, experimentalBiggerContext: false, experimentalSkillAttachments: false,
@@ -26,41 +26,21 @@ const config = { ...defaultConfig("browser-only"),
 let busy = false; let completed = 0;
 const loginChrome = process.env.CODEX_WEB_LOGIN_CHROME || config.chromeExecutablePath;
 const loginProfile = join(stateDir, "manual-login-profile");
+process.env.CODEX_WEB_BROWSER_PROFILE = loginProfile;
 const error = (status: number, code: string) => Response.json({ error: { code, message: code } }, { status });
 function authorized(req: Request): boolean {
   const actual = Buffer.from(req.headers.get("authorization") || ""); const expected = Buffer.from(`Bearer ${key}`);
   return !req.headers.has("origin") && actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 async function captureManualLogin(signal: AbortSignal) {
-  let context: any; let browser: any;
-  const close = () => { void context?.close().catch(() => {}); void browser?.close().catch(() => {}); };
-  signal.addEventListener("abort", close, { once: true });
+  const owned = await openOwnedBrowser(loginChrome, loginProfile, signal);
+  const context = owned.context;
   try {
     signal.throwIfAborted();
-    // Remove only this dedicated profile's restored tabs before offline session-cookie capture.
-    const profile = join(loginProfile, "Default");
-    rmSync(join(profile, "Sessions"), { recursive: true, force: true });
-    for (const name of ["Current Session", "Current Tabs", "Last Session", "Last Tabs"])
-      rmSync(join(profile, name), { force: true });
-    context = await chromium.launchPersistentContext(loginProfile, {
-      executablePath: loginChrome, headless: true, offline: true, serviceWorkers: "block",
-      ignoreDefaultArgs: ["--password-store=basic", "--use-mock-keychain"],
-      args: ["--no-first-run", "--no-default-browser-check", "--disable-background-networking", "--restore-last-session"],
-    });
-    signal.throwIfAborted();
-    await context.setOffline(true);
-    await context.route("**/*", (route: any) => route.fulfill({ status: 200, contentType: "text/html",
-      body: '<!doctype html><title>Private login verification</title>' }));
-    const page = context.pages()[0] || await context.newPage();
-    await page.goto(CHATGPT_TEMPORARY_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 15000 });
-    const state = sanitizeBrowserLoginStorageState(await context.storageState());
-    await context.close(); context = undefined;
-    signal.throwIfAborted();
-    // Only ChatGPT/OpenAI state is passed to verification; Google cookies are excluded.
-    browser = await chromium.launch({ executablePath: config.chromeExecutablePath, headless: false });
-    context = await browser.newContext({ storageState: state });
-    signal.throwIfAborted();
+    // Verification and inference use the same dedicated normal Chrome profile. A fresh
+    // automation/incognito context can be challenged even after a successful manual login.
     const verified = await context.newPage();
+    observePageFailures(verified);
     // Observe the page's own authenticated account request. An extra auth/session probe can
     // receive a 403 challenge even while the logged-in app's account APIs succeed.
     const account = verified.waitForResponse((response: any) => {
@@ -83,8 +63,7 @@ async function captureManualLogin(signal: AbortSignal) {
       verifiedAt: new Date().toISOString(), ...capabilities, unpersonalized: true }));
     console.info("Manual web login verified; Temporary Chat only.");
   } finally {
-    signal.removeEventListener("abort", close);
-    await context?.close().catch(() => {}); await browser?.close().catch(() => {});
+    await owned.close();
   }
 }
 const login = new ManualLogin({ executable: loginChrome, profile: loginProfile,
