@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--user', required=True)
     parser.add_argument('--bun', required=True, help='Verified Bun 1.4.0 executable')
     parser.add_argument('--chrome', required=True, help='Chrome/Chromium executable')
+    parser.add_argument('--login-chrome', help='Optional supported stable Chrome executable for manual account login')
     parser.add_argument('--egress-proxy', default='')
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -25,10 +26,10 @@ def main():
     user = pwd.getpwnam(args.user)
     if user.pw_uid == 0 or not re.fullmatch(r'[A-Za-z0-9_-]+', args.user):
         parser.error('Use a non-root service user.')
-    for value in [str(ROOT), args.bun, args.chrome]:
+    for value in [str(ROOT), args.bun, args.chrome, args.login_chrome or args.chrome]:
         if not re.fullmatch(r'/[A-Za-z0-9_./-]+', value):
             parser.error('Use absolute executable/project paths without spaces or special characters.')
-    if not all(Path(p).is_file() for p in [args.bun, args.chrome, '/etc/codex-proxy/client.json']):
+    if not all(Path(p).is_file() for p in [args.bun, args.chrome, args.login_chrome or args.chrome, '/etc/codex-proxy/client.json']):
         parser.error('Existing proxy configuration and both runtime executables are required.')
     if not shutil.which('xvfb-run'):
         parser.error('Install Xvfb and Chromium system libraries first.')
@@ -51,11 +52,14 @@ def main():
         path.mkdir(mode=0o700, parents=True, exist_ok=True); os.chown(path, user.pw_uid, user.pw_gid)
     runner = ['runuser', '-u', args.user, '--']
     subprocess.run(runner + ['python3', str(ROOT/'scripts/prepare-web.py'), '--bun', args.bun], check=True)
-    wrapper = Path('/var/lib/codex-proxy/web/chrome')
-    wrapper.write_text('#!/bin/sh\nif [ -n "$CODEX_WEB_EGRESS_PROXY" ]; then\n exec '+args.chrome+' "--proxy-server=$CODEX_WEB_EGRESS_PROXY" "$@"\nfi\nexec '+args.chrome+' "$@"\n')
-    wrapper.chmod(0o700); os.chown(wrapper, user.pw_uid, user.pw_gid)
+    def chrome_wrapper(name, executable):
+        wrapper = Path('/var/lib/codex-proxy/web')/name
+        wrapper.write_text('#!/bin/sh\nif [ -n "$CODEX_WEB_EGRESS_PROXY" ]; then\n exec '+executable+' "--proxy-server=$CODEX_WEB_EGRESS_PROXY" "$@"\nfi\nexec '+executable+' "$@"\n')
+        wrapper.chmod(0o700); os.chown(wrapper, user.pw_uid, user.pw_gid)
+        return str(wrapper)
     web = json.loads((ROOT/'config/web.example.json').read_text())
-    web.update(bun_bin=args.bun, chrome_bin=str(wrapper))
+    web.update(bun_bin=args.bun, chrome_bin=chrome_wrapper('chrome', args.chrome),
+               login_chrome_bin=chrome_wrapper('login-chrome', args.login_chrome or args.chrome))
     for name, data in [('web.json', web), ('routing.json', json.loads((ROOT/'config/routing.example.json').read_text()))]:
         path = Path('/var/lib/codex-proxy/routing.json') if name == 'routing.json' else Path('/etc/codex-proxy')/name
         with path.open('x') as stream: stream.write(json.dumps(data, indent=2)+'\n')

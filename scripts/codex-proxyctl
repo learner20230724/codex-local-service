@@ -14,7 +14,7 @@ CONFIG = Path('/etc/codex-proxy/client.json')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['info', 'check', 'smoke', 'run', 'mode', 'web-status', 'web-login', 'web-login-stop', 'resources'])
+    parser.add_argument('action', choices=['info', 'check', 'smoke', 'run', 'mode', 'web-status', 'web-login', 'web-login-stop', 'web-login-finish', 'resources'])
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     config = json.loads(CONFIG.read_text())
@@ -54,9 +54,9 @@ def main():
         timeout, method = 10, 'PUT' if data else 'GET'
     elif args.action.startswith('web-'):
         web = json.loads(Path('/etc/codex-proxy/web.json').read_text())
-        path = {'web-status': '/health', 'web-login': '/login/start', 'web-login-stop': '/login/stop'}[args.action]
+        path = {'web-status': '/health', 'web-login': '/login/start', 'web-login-stop': '/login/stop', 'web-login-finish': '/login/finish'}[args.action]
         url = f"http://127.0.0.1:{web.get('port', 3468)}{path}"
-        data, timeout = (None if args.action == 'web-status' else b'{}'), 45
+        data, timeout = (None if args.action == 'web-status' else b'{}'), (135 if args.action == 'web-login-finish' else 45)
     elif args.action == 'check':
         url, data, timeout = config['base_url'].removesuffix('/v1') + '/health', None, 10
     else:
@@ -75,7 +75,7 @@ def main():
         result = json.load(response)
         backend = response.headers.get('X-Codex-Proxy-Backend')
         fallback = response.headers.get('X-Codex-Proxy-Fallback')
-    if args.action in ['mode', 'web-status', 'web-login', 'web-login-stop']:
+    if args.action in ['mode', 'web-status', 'web-login', 'web-login-stop', 'web-login-finish']:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
     if args.action == 'check':

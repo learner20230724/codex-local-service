@@ -5,7 +5,7 @@
 ## 已通过
 
 - 主代理构建与 147 项自动化测试，包括网页优先、缺失登录、额度错误、超时取消、单任务并发溢出、流式中断和配置软链接的持久化切换。网页响应在这些路由测试中使用模拟数据。
-- Bun 适配契约及隐私保护的 3 项测试；浏览器桥接代码打包检查；Python 脚本语法检查。
+- Bun 适配契约、隐私保护与人工登录生命周期的 8 项测试；浏览器桥接代码打包检查；Python 脚本语法检查。登录测试验证显式完成后才执行状态捕获、正常关窗、超时终止、取消验证和启动失败；不使用真实 Google 账号。
 - 已部署服务的 `auto → codex → auto` 切换与持久化。
 - 真实 Codex 推理：auto 在 `web_login_required` 时回退成功；Responses JSON 和 Chat Completions SSE 均成功，响应头表明实际后端为 Codex。
 - 无密钥访问被拒绝；携带 Origin 的直接访问被拒绝；推理与维护服务端口仅在回环地址监听。
@@ -31,9 +31,15 @@
 
 ```bash
 npm test --prefix upstream
-bun test web/contract.test.ts
+bun test web/contract.test.ts web/manual-login.test.ts
 bun build web/bridge.ts --target=bun --outdir /tmp/codex-web-build-check
 python3 -m py_compile scripts/*.py scripts/codex-proxyctl
 ```
 
 全新机器的完整安装器尚未在第二台干净主机验收；当前机器按相同配置约定分步部署。
+
+## 人工登录修正
+
+用户首次 Google 登录出现“不安全浏览器”提示。旧窗口由 Playwright 连接；改为独立启动官方稳定版 Chrome 153.0.8010.52，用户完成登录后才进行离线状态捕获与 ChatGPT 验证。安装包按 Google 签名的仓库索引及 SHA-256 校验。实机进程参数已确认没有自动化、远程调试、无头或禁用沙箱参数；登录页面 HTTP 200，维护 WebSocket 已收到 VNC 协议握手，公网入口仍要求认证。真实 Codex 回退在改动后再次成功。
+
+此修正证明新的人工登录流程已部署，尚不证明 Google 已接受账号登录；需要用户实际完成登录后继续验收。

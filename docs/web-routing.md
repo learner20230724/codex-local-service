@@ -41,7 +41,7 @@ codex-proxyctl smoke codex      # 必须由 Codex 成功回答
 
 ## 无桌面 Linux 与首次登录
 
-使用 Linux x64、Bun 1.4.0、Chromium、Xvfb。浏览器必须运行，但不需要完整桌面或物理显示器。首次由用户在专用浏览器完成正常登录与验证；不读取现有 Codex `auth.json`。
+使用 Linux x64、Bun 1.4.0、Chromium/Chrome、Xvfb。浏览器必须运行，但不需要完整桌面或物理显示器。首次由用户在专用普通浏览器完成登录，登录期间不启动 Playwright 或调试连接；不读取现有 Codex `auth.json`。建议使用 Google 官方稳定版 Chrome 进行 Google 联合登录，`web.json` 的 `login_chrome_bin` 可与推理用的 `chrome_bin` 分别配置，省略时复用后者。
 
 1. `git submodule update --init --recursive` 取得固定源码。
 2. 安装 Bun、Chromium、Xvfb 与浏览器所需系统库；下载二进制时核对其发布 SHA-256。准备的 Chromium 可执行文件可通过包装脚本加入本机出站代理。
@@ -50,7 +50,7 @@ codex-proxyctl smoke codex      # 必须由 Codex 成功回答
 5. 用 `deploy/codex-proxy-web.service.in` 生成 systemd 单元。填入用户、项目路径、出站代理；无代理时环境变量留空。确认 `:97` 虚拟显示未被占用；需要改显示号时同步修改维护连接。
 6. 构建主代理 `cd upstream && npm ci --ignore-scripts && npm run build`。启动并启用网页服务，在无在途推理时重启主代理。
 7. 执行 `codex-proxyctl web-login`。通过 SSH 隧道或受认证 HTTPS 的临时 noVNC 维护入口操作该虚拟屏幕。VNC、调试与网页推理端口始终只在本机监听；不能公开无认证的登录窗口。
-8. 登录后程序自动验证服务端登录状态、临时聊天、非个性化和账号模型能力；仅保存该新建网页登录会话。窗口 30 分钟超时关闭。用 `web-status` 确认 ready，再分别进行 web / auto / codex 真实调用。
+8. 手动登录并看到 ChatGPT 聊天页后，关闭这个专用 Chrome 窗口，或执行 `codex-proxyctl web-login-finish`。程序先结束人工登录浏览器，再离线提取这个专用 profile 的 ChatGPT/OpenAI 状态，排除 Google cookies，随后验证 ChatGPT 服务端登录状态、临时聊天、非个性化和账号模型能力。等待登录时不监视密码输入；单纯打开浏览器不算登录成功。窗口 30 分钟超时关闭，验证最多 120 秒。用 `web-status` 确认 ready，再分别进行 web / auto / codex 真实调用。
 
 对于已经安装主代理且准备好运行时的机器，第 3–5 步可以一次执行（拒绝覆盖已有网页配置）：
 
@@ -58,12 +58,15 @@ codex-proxyctl smoke codex      # 必须由 Codex 成功回答
 sudo python3 scripts/install-web.py --user ubuntu \
   --bun /opt/codex-proxy-web/bin/bun \
   --chrome /opt/codex-proxy-web/chromium/chrome \
+  --login-chrome /usr/bin/google-chrome-stable \
   --egress-proxy http://127.0.0.1:7890
 ```
 
 它不自动重启正在服务的主代理；在没有在途调用时完成构建和主服务重启。`codex-proxyctl resources` 的内存包含 Bun、Xvfb 和整个 Chromium 进程组，不能只看主进程 RSS。连续采样可用 `python3 scripts/measure-resources.py --seconds 30`；应分别测登录待机、回答中和回答完成后的占用。
 
 `codex-proxyctl web-login-stop` 可提前关闭浏览器登录窗口。远程维护代理也应设置 30 分钟期限并在登录后关闭；重新绑定时重新开启，不把它当常驻公开页面。
+
+若 Google 报 “This browser or app may not be secure”，参考 [Google 支持的浏览器说明](https://support.google.com/accounts/answer/7675428?hl=en)。初版集成的 Playwright 登录窗口已替换为普通人工 Chrome。不要反复重试自动化登录，也不要关闭账号验证；如果普通浏览器仍被拒绝，需要按账号提供方提示处理受支持浏览器、网络或账号验证问题。登录时必须继续使用原账号的登录方式。
 
 仓库提供 `deploy/codex-proxy-web-vnc.service.in` 与 `deploy/codex-proxy-web-login.service.in` 模板（需要 x11vnc/noVNC/websockify），默认均只监听回环且 30 分钟到期。可用 SSH 本地转发访问 6087；使用 Caddy 时必须将整个 noVNC 静态目录和 WebSocket 路径一起置于已有 HTTPS 认证之后。登录结束后停止两个维护单元。浏览器状态只存服务用户私有目录，不能将 profile 或 storage-state 放到网页目录。
 

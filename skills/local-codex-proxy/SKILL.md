@@ -18,6 +18,8 @@ description: 为这台服务器上的项目接入、检查或维护已部署的 
 
 若已安装网页通道，同一入口支持 `codex-proxyctl mode auto|web|codex`。`auto` 优先 ChatGPT 非个性化临时聊天，网页未登录、限额或服务故障时使用现有 Codex；响应头会标明实际后端。单网页任务并发，额外并发走 Codex；不支持的网页请求也保留原 Codex 行为。`web-status` 检查登录，`resources` 查看整个服务进程组资源，`smoke web` 才是网页真实调用验证。详细接入与边界见 [网页通道说明](../../docs/web-routing.md)。
 
+首次网页登录使用 `web-login` 开启普通人工 Chrome，登录阶段不连接自动化。用户确认看到 ChatGPT 聊天页后运行 `web-login-finish`，或让用户关闭专用窗口，才开始验证与绑定。不得在用户尚未完成输入时运行 finish；`web-status` 的 waiting_for_login 不代表已认证。维护入口约 30 分钟过期，收到用户报错后先核对服务与登录期限。
+
 ## 必须保留的本机约定
 
 - 由项目后端访问，前端不携带代理密钥；本机密钥不是 OpenAI Platform API key。不要读取、复制或显示 Codex 的 `auth.json`。
