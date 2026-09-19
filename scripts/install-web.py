@@ -58,7 +58,7 @@ def main():
         wrapper.chmod(0o700); os.chown(wrapper, user.pw_uid, user.pw_gid)
         return str(wrapper)
     web = json.loads((ROOT/'config/web.example.json').read_text())
-    web.update(bun_bin=args.bun, chrome_bin=chrome_wrapper('chrome', args.chrome),
+    web.update(bun_bin=args.bun, egress_proxy=args.egress_proxy, chrome_bin=chrome_wrapper('chrome', args.chrome),
                login_chrome_bin=chrome_wrapper('login-chrome', args.login_chrome or args.chrome))
     for name, data in [('web.json', web), ('routing.json', json.loads((ROOT/'config/routing.example.json').read_text()))]:
         path = Path('/var/lib/codex-proxy/routing.json') if name == 'routing.json' else Path('/etc/codex-proxy')/name

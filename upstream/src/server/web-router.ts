@@ -11,6 +11,7 @@ export interface RoutingSettings {
   web_model: string;
   web_timeout_ms: number;
   cooldown_seconds: number;
+  default_reasoning_effort?: string;
 }
 const defaults: RoutingSettings = {
   mode: "codex", web_base_url: "http://127.0.0.1:3468", web_model: "chatgpt-web/light",
@@ -23,7 +24,8 @@ function settings(): RoutingSettings {
   const url = new URL(value.web_base_url);
   if (!["auto", "web", "codex"].includes(value.mode) || url.protocol !== "http:"
       || url.hostname !== "127.0.0.1" || url.username || url.password
-      || !/^chatgpt-web\/(light|medium|high|extra-high|pro|luna|think)$/.test(value.web_model)
+      || !/^chatgpt-web\/(light|medium|high|extra-high|pro|luna|think|gpt-6-astra)$/.test(value.web_model)
+      || (value.default_reasoning_effort !== undefined && !["low", "medium", "high", "xhigh", "max"].includes(value.default_reasoning_effort))
       || !Number.isFinite(value.web_timeout_ms) || value.web_timeout_ms < 1000
       || value.web_timeout_ms > 180000 || !Number.isFinite(value.cooldown_seconds)
       || value.cooldown_seconds < 1 || value.cooldown_seconds > 3600) throw new Error("Invalid routing configuration");
@@ -53,6 +55,7 @@ export function toWebRequest(body: any, chat: boolean, model: string): any {
   const input = chat ? body.messages.map((m: any) => ({ type: "message", role: m.role,
     content: typeof m.content === "string" ? m.content : m.content.map((c: any) => ({ type: "input_text", text: c.text })) })) : body.input;
   const result: any = { model, input, stream: !!body.stream, store: false };
+  if (model === "chatgpt-web/gpt-6-astra") result.reasoning = { effort: body.reasoning_effort || body.reasoning?.effort || "low" };
   if (body.instructions) result.instructions = body.instructions;
   if (body.max_output_tokens || body.max_completion_tokens || body.max_tokens)
     result.max_output_tokens = body.max_output_tokens || body.max_completion_tokens || body.max_tokens;
@@ -116,6 +119,13 @@ export function createWebRouter(deps: { readSettings?: () => RoutingSettings; fe
     if (!["auto", "web", "codex"].includes(mode)) { res.status(400).json({ error: { code: "invalid_backend" } }); return; }
     const body = req.body; const chat = req.path.endsWith("/chat/completions");
     if (body?.model !== undefined && typeof body.model !== "string") { res.status(400).json({ error: { code: "invalid_model" } }); return; }
+    // This deployment preference applies to the default model on either backend;
+    // an explicit caller effort or different native model retains its own semantics.
+    if (body && cfg.default_reasoning_effort && (!body.model || body.model === CONFIG.defaultModel || body.model === "chatgpt-web/gpt-6-astra")
+        && !body.reasoning_effort && !body.reasoning?.effort) {
+      if (chat) body.reasoning_effort = cfg.default_reasoning_effort;
+      else body.reasoning = { ...body.reasoning, effort: cfg.default_reasoning_effort };
+    }
     const fallback = (reason?: string) => {
       if (res.destroyed) return;
       counts.codex++; if (reason) counts.fallbacks++;
@@ -155,8 +165,10 @@ export function createWebRouter(deps: { readSettings?: () => RoutingSettings; fe
       const effort = body.reasoning_effort || body.reasoning?.effort;
       const effortModels: Record<string, string> = { none: "light", minimal: "light", low: "light", medium: "medium", high: "high", xhigh: "extra-high", max: "pro" };
       if (effort && !effortModels[effort]) throw new WebError(503, "web_effort_unavailable");
-      const model = explicitWebModel ? body.model : effortModels[effort] ? `chatgpt-web/${effortModels[effort]}` : cfg.web_model;
-      if (state.capabilities && ((!state.capabilities.solAvailable && !["chatgpt-web/luna", "chatgpt-web/think"].includes(model))
+      const model = explicitWebModel ? body.model : cfg.web_model === "chatgpt-web/gpt-6-astra" ? cfg.web_model
+        : effortModels[effort] ? `chatgpt-web/${effortModels[effort]}` : cfg.web_model;
+      if (Array.isArray(state.supported_models) && !state.supported_models.includes(model)) throw new WebError(503, "web_model_unavailable");
+      if (model !== "chatgpt-web/gpt-6-astra" && state.capabilities && ((!state.capabilities.solAvailable && !["chatgpt-web/luna", "chatgpt-web/think"].includes(model))
         || (model === "chatgpt-web/pro" && !state.capabilities.proAvailable)
         || (model === "chatgpt-web/extra-high" && !state.capabilities.extraHighAvailable))) throw new WebError(503, "web_model_unavailable");
       const upstream = await request(`${cfg.web_base_url}/v1/responses`, { method: "POST", headers,

@@ -68,6 +68,24 @@ test("reasoning effort is mapped to an explicit web mode", async t => {
   await s.post({ ...prompt, reasoning_effort: "xhigh" } as any);
   assert.equal(s.payloads[0].model, "chatgpt-web/extra-high");
 });
+test("GPT-6 retains its model when low effort is selected and defaults to low", async t => {
+  const s = await setup(t, url => url.endsWith("/health")
+    ? Response.json({ ready: true, supported_models: ["chatgpt-web/gpt-6-astra"] }) : Response.json({ ...completed, model: "chatgpt-web/gpt-6-astra" }),
+    { ...settings, web_model: "chatgpt-web/gpt-6-astra", default_reasoning_effort: "low" });
+  await s.post();
+  await s.post({ ...prompt, reasoning_effort: "high" } as any);
+  await s.post({ model: CONFIG.defaultModel, input: "hello" } as any, undefined, "/v1/responses");
+  assert.deepEqual(s.payloads.map(x => x.model), Array(3).fill("chatgpt-web/gpt-6-astra"));
+  assert.deepEqual(s.payloads.map(x => x.reasoning.effort), ["low", "high", "low"]);
+});
+test("an HTTP worker model mismatch falls back before exposing the wrong model", async t => {
+  const s = await setup(t, url => url.endsWith("/health") ? ok() : stream([
+    { type: "response.created" }, { type: "response.failed", response: { status: "failed", error: { code: "web_model_mismatch" } } },
+  ]), { ...settings, web_model: "chatgpt-web/gpt-6-astra" });
+  const r = await s.post({ ...prompt, stream: true } as any);
+  assert.equal(r.headers.get("x-codex-proxy-backend"), "codex");
+  assert.equal(r.headers.get("x-codex-proxy-fallback"), "web_model_mismatch");
+});
 test("web HTTP 429 and failed JSON fall back once", async t => {
   for (const response of [Response.json({ error: { code: "rate_limit_exceeded" } }, { status: 429 }), Response.json({ status: "failed", error: { code: "rate_limit_exceeded" } })]) {
     const s = await setup(t, url => url.endsWith("/health") ? ok() : response);

@@ -1,5 +1,7 @@
 # 网页优先与 Codex 备用
 
+当前推荐迁移路径为[无浏览器 HTTP 通道](http-web.md)：复用已有网页登录，GPT-6 Astra＋Light thinking，正常推理无需虚拟屏幕。以下浏览器流程作为首次绑定和可切换的兼容实现保留；其 light/high 档位不代表新的 GPT-6 型号。
+
 同一个 `codex-proxy.service` HTTP 入口和本机密钥管理两条推理通道。默认端口仍为 `127.0.0.1:3467/v1`。可选的私有 `codex-proxy-web.service` 在 `127.0.0.1:3468` 驱动一个浏览器任务，使用固定版本的 `miuuyy/codex-chatgpt-web`。它不是独立对外产品，也不改全局 Codex 配置。
 
 首次部署的实测结果、资源采样和待验收项见 [验证记录](web-validation.md)。

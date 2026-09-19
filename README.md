@@ -2,7 +2,7 @@
 
 把本机已登录的官方 Codex 整理成可供多个项目复用的本地推理服务：固定 HTTP 入口、systemd 守护、独立本机密钥，以及供 Codex 自动发现的接入 Skill。
 
-现支持可选的 **ChatGPT 网页临时聊天优先、Codex 备用**：同一入口用 `codex-proxyctl mode auto|web|codex` 切换，普通文本与流式请求自动调配。网页端在无桌面 Linux 的虚拟屏幕里运行，强制临时聊天和非个性化；首次需要用户网页登录。接入、切换边界和资源检查见 [网页通道说明](docs/web-routing.md)。
+现支持可选的 **ChatGPT 网页临时聊天优先、Codex 备用**：同一入口用 `codex-proxyctl mode auto|web|codex` 切换，普通文本与流式请求自动调配。新增[无浏览器 HTTP 通道](docs/http-web.md)，复用已有网页登录，调用 GPT-6 Astra＋轻量思考；正常推理无需 Chrome 或虚拟屏幕。两种网页传输均强制临时聊天和非个性化。接入、切换边界和资源检查见 [网页通道说明](docs/web-routing.md)。
 
 基于 [mehdic/codex-proxy](https://github.com/mehdic/codex-proxy) `0.4.8`，固定提交 `da828dafa0bb98a932e022edb608e6b35f0a8d9b`，保留原有 MIT 许可及本机加固补丁。仓库包含可构建的上游源码，不包含账号凭据、代理密钥、业务数据或 node_modules。
 
@@ -11,9 +11,8 @@
         │ HTTP + 本机 Bearer 密钥
         ▼
 codex-proxy.service · 127.0.0.1:3467
-        │ stdio JSON-RPC
-        ▼
-官方 codex app-server → 当前 Codex 账户可用模型与额度
+        ├─ auto 网页优先 → 私有 HTTP worker → ChatGPT 非个性化临时聊天
+        └─ 原生 / 回退 → 官方 codex app-server → Codex 账户可用模型与额度
 ```
 
 官方 [App Server 文档](https://learn.chatgpt.com/docs/app-server) 说明了其嵌入接口。本项目是社区协议适配层；兼容 HTTP 接口不意味着提供官方 Platform API，也不保证其所有参数和功能等价。认证和续期交给官方 Codex，不复制 OAuth token。

@@ -3,5 +3,7 @@
   "bun_bin": "/opt/codex-proxy-web/bin/bun",
   "chrome_bin": "/opt/codex-proxy-web/bin/chrome",
   "login_chrome_bin": "/opt/codex-proxy-web/bin/login-chrome",
-  "port": 3468
+  "port": 3468,
+  "transport": "browser",
+  "http_python": "/opt/codex-proxy-web/http-venv/bin/python"
 }

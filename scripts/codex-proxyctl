@@ -14,9 +14,11 @@ CONFIG = Path('/etc/codex-proxy/client.json')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['info', 'check', 'smoke', 'run', 'mode', 'web-status', 'web-login', 'web-login-stop', 'web-login-finish', 'resources'])
+    parser.add_argument('action', choices=['info', 'check', 'smoke', 'run', 'mode', 'web-status', 'web-login', 'web-login-stop', 'web-login-finish', 'web-refresh', 'resources'])
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if args.action == 'web-refresh':
+        os.execv('/usr/bin/python3', ['/usr/bin/python3', str(Path(__file__).resolve().parent/'refresh-web-session.py')])
     config = json.loads(CONFIG.read_text())
     if args.action == 'info':
         print(json.dumps(config, ensure_ascii=False, indent=2))

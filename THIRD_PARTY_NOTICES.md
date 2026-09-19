@@ -1,5 +1,15 @@
 # Third-party software
 
+`web/http/` is an independently executed **AGPL-3.0-only** Python component, with
+its license in [web/http/LICENSE](web/http/LICENSE). It adapts protocol helpers
+from [yukkcat/chatgpt2api](https://github.com/yukkcat/chatgpt2api), revision
+`d58db042411f512449dd90e3b7a73de79ab38c46`, and WebSocket framing from the
+MIT-licensed [suphotP/chatgpt-api](https://github.com/suphotP/chatgpt-api), revision
+`f998a6d83f324cb3187396dd7efced0c40f29601`. Original notices and MIT license text
+are retained in [web/http/UPSTREAM_NOTICE](web/http/UPSTREAM_NOTICE). This subtree
+is not covered by the repository's default MIT license. The Bun host and gateway
+communicate with it through JSON pipes; no upstream account-management app is run.
+
 `upstream/` contains source from [mehdic/codex-proxy](https://github.com/mehdic/codex-proxy), version 0.4.8, commit `da828dafa0bb98a932e022edb608e6b35f0a8d9b`, with local inference and authentication patches.
 
 The original MIT license is retained in [upstream/LICENSE](upstream/LICENSE). Node dependencies are recorded in `upstream/package-lock.json`; their licenses remain applicable. Dependencies and build artifacts are not committed.
