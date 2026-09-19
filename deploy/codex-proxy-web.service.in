@@ -1,0 +1,24 @@
+[Unit]
+Description=Codex proxy private ChatGPT Temporary Chat worker
+After=network-online.target mihomo.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_USER@
+WorkingDirectory=@PREFIX@
+Environment=CODEX_WEB_EGRESS_PROXY=@EGRESS_PROXY@
+Environment=HTTP_PROXY=@EGRESS_PROXY@
+Environment=HTTPS_PROXY=@EGRESS_PROXY@
+Environment=NO_PROXY=localhost,127.0.0.1,::1
+ExecStart=/usr/bin/xvfb-run --server-num=97 --auth-file=/var/lib/codex-proxy/web/Xauthority --server-args="-screen 0 1280x800x24 -nolisten tcp" /usr/bin/python3 @PREFIX@/scripts/serve-web.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+MemoryAccounting=true
+CPUAccounting=true
+
+[Install]
+WantedBy=multi-user.target

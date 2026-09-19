@@ -5,3 +5,7 @@
 The original MIT license is retained in [upstream/LICENSE](upstream/LICENSE). Node dependencies are recorded in `upstream/package-lock.json`; their licenses remain applicable. Dependencies and build artifacts are not committed.
 
 The official Codex CLI is separately installed and authenticated by the service operator. This project is not affiliated with or endorsed by OpenAI.
+
+`web/upstream` is a Git submodule of [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web), version 5.0.8, pinned to `eaf4f09ae92d4dc4429fa597b0861663138f08f8`. Its MIT license and bundled third-party notices remain in that directory. Initialize it with `git submodule update --init --recursive`.
+
+`scripts/prepare-web.py` copies the pinned source to the ignored `.runtime/web` directory, adds the mandatory non-personalized Temporary Chat check from `web/privacy.ts`, and suppresses the Codex-specific local-tools warning for plain inference. It does not run upstream setup, install Codex routes, import Codex OAuth credentials, or enable the full tool harness. Bun and Chromium are separately installed runtime dependencies; their licenses apply.

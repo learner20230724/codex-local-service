@@ -1,0 +1,6 @@
+{
+  "state_dir": "/var/lib/codex-proxy/web",
+  "bun_bin": "/opt/codex-proxy-web/bin/bun",
+  "chrome_bin": "/opt/codex-proxy-web/bin/chrome",
+  "port": 3468
+}

@@ -34,6 +34,7 @@ env.update({
     'CODEX_PROXY_SANDBOX': 'read-only',
     'CODEX_PROXY_APPROVAL_POLICY': 'never',
     'CODEX_PROXY_DEBUG': '0',
+    'CODEX_PROXY_ROUTING_FILE': '/etc/codex-proxy/routing.json' if Path('/etc/codex-proxy/routing.json').exists() else '',
     'CODEX_PROXY_TRACE': '0',
     'CODEX_PROXY_CORS': '0',
     'DEBUG': '0',

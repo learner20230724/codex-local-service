@@ -7,6 +7,7 @@ import { invalidRequestError } from "./errors.js";
 import { drainGlobalPool, prewarmGlobalPool } from "../subprocess/pool.js";
 import { drainGlobalSessions } from "../subprocess/session-pool.js";
 import { trace, traceError } from "./trace.js";
+import { createWebRouter } from "./web-router.js";
 
 export interface ServerOptions {
   host?: string;
@@ -75,6 +76,7 @@ export function createApp(options: Pick<ServerOptions, "maxBodySize"> = {}): Exp
     next();
   });
   app.use(express.json({ limit: options.maxBodySize || CONFIG.maxBodySize }));
+  app.use(createWebRouter());
   app.use(createRouter());
   app.use((_req: Request, res: Response) => {
     const body = invalidRequestError("Not found");

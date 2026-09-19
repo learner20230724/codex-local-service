@@ -1,0 +1,228 @@
+/** Web-first inference routing. Never retry after emitting a response to the caller. */
+import { Router, type Response as ExpressResponse } from "express";
+import { readFileSync, writeFileSync, renameSync, realpathSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { CONFIG } from "./config.js";
+
+export type Mode = "auto" | "web" | "codex";
+export interface RoutingSettings {
+  mode: Mode;
+  web_base_url: string;
+  web_model: string;
+  web_timeout_ms: number;
+  cooldown_seconds: number;
+}
+const defaults: RoutingSettings = {
+  mode: "codex", web_base_url: "http://127.0.0.1:3468", web_model: "chatgpt-web/high",
+  web_timeout_ms: 120000, cooldown_seconds: 60,
+};
+function settings(): RoutingSettings {
+  const file = process.env.CODEX_PROXY_ROUTING_FILE;
+  if (!file) return { ...defaults };
+  const value = { ...defaults, ...JSON.parse(readFileSync(file, "utf8")) };
+  const url = new URL(value.web_base_url);
+  if (!["auto", "web", "codex"].includes(value.mode) || url.protocol !== "http:"
+      || url.hostname !== "127.0.0.1" || url.username || url.password
+      || !/^chatgpt-web\/(light|medium|high|extra-high|pro|luna|think)$/.test(value.web_model)
+      || !Number.isFinite(value.web_timeout_ms) || value.web_timeout_ms < 1000
+      || value.web_timeout_ms > 180000 || !Number.isFinite(value.cooldown_seconds)
+      || value.cooldown_seconds < 1 || value.cooldown_seconds > 3600) throw new Error("Invalid routing configuration");
+  return value;
+}
+
+class WebError extends Error {
+  constructor(public status: number, public code: string) { super(code); }
+}
+function responseError(value: any): WebError | undefined {
+  if (value?.error || ["failed", "incomplete", "cancelled"].includes(value?.status)) {
+    const code = value.error?.code || value.error?.type || "web_response_failed";
+    return new WebError(/rate|limit|quota/.test(code) ? 429 : /auth|login/.test(code) ? 503 : 502, code);
+  }
+}
+function compatible(body: any, chat: boolean): boolean {
+  if (body.tools?.length || body.functions?.length || body.previous_response_id || body.background
+      || body.n > 1 || body.audio || body.modalities?.some((v: string) => v !== "text")) return false;
+  const input = chat ? body.messages : body.input;
+  if (typeof input === "string") return !chat;
+  return Array.isArray(input) && input.length > 0 && input.every((m: any) =>
+    m && ["user", "assistant", "system", "developer"].includes(m.role) && !m.tool_calls
+    && (typeof m.content === "string" || (Array.isArray(m.content) && m.content.every((c: any) =>
+      c && ["text", "input_text", "output_text"].includes(c.type) && typeof c.text === "string"))));
+}
+export function toWebRequest(body: any, chat: boolean, model: string): any {
+  const input = chat ? body.messages.map((m: any) => ({ type: "message", role: m.role,
+    content: typeof m.content === "string" ? m.content : m.content.map((c: any) => ({ type: "input_text", text: c.text })) })) : body.input;
+  const result: any = { model, input, stream: !!body.stream, store: false };
+  if (body.instructions) result.instructions = body.instructions;
+  if (body.max_output_tokens || body.max_completion_tokens || body.max_tokens)
+    result.max_output_tokens = body.max_output_tokens || body.max_completion_tokens || body.max_tokens;
+  const format = chat ? body.response_format : body.text?.format;
+  if (format) result.text = { format: format.type === "json_schema" && format.json_schema
+    ? { type: "json_schema", ...format.json_schema } : format };
+  return result;
+}
+function textOf(value: any): string {
+  return (value.output || []).filter((x: any) => x.type === "message" && x.role === "assistant"
+    && (!x.phase || x.phase === "final_answer"))
+    .flatMap((x: any) => x.content || []).filter((x: any) => x.type === "output_text")
+    .map((x: any) => x.text).join("");
+}
+function chatUsage(usage: any): any {
+  return { prompt_tokens: usage?.input_tokens ?? 0, completion_tokens: usage?.output_tokens ?? 0,
+    total_tokens: usage?.total_tokens ?? 0 };
+}
+export async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<any> {
+  const reader = body.getReader(); const decoder = new TextDecoder(); let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer = (buffer + decoder.decode(value, { stream: !done })).replace(/\r\n/g, "\n");
+      if (buffer.length > 8 * 1024 * 1024) throw new WebError(502, "web_event_too_large");
+      let boundary;
+      while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+        const frame = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 2);
+        const data = frame.split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
+        if (data && data !== "[DONE]") yield JSON.parse(data);
+      }
+      if (done) break;
+    }
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
+function writeEvent(res: ExpressResponse, event: any): void {
+  res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+}
+
+export function createWebRouter(deps: { readSettings?: () => RoutingSettings; fetch?: typeof fetch } = {}) {
+  const router = Router(); const read = deps.readSettings || settings; const request = deps.fetch || fetch;
+  let busy = false; let cooldownUntil = 0; let lastError: string | null = null;
+  const counts = { web: 0, codex: 0, fallbacks: 0 };
+  const status = () => ({ ...read(), web_busy: busy, cooldown_until: cooldownUntil || null, last_error: lastError, requests: { ...counts } });
+  router.get("/routing", (_req, res) => { try { res.json(status()); } catch { res.status(503).json({ error: { code: "routing_config_invalid" } }); } });
+  router.put("/routing", (req, res) => {
+    if (!process.env.CODEX_PROXY_ROUTING_FILE || !["auto", "web", "codex"].includes(req.body?.mode)) {
+      res.status(400).json({ error: { code: "invalid_routing_mode" } }); return;
+    }
+    try {
+      const file = realpathSync(process.env.CODEX_PROXY_ROUTING_FILE); const value = { ...read(), mode: req.body.mode };
+      const temp = `${file}.${process.pid}.tmp`;
+      writeFileSync(temp, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 }); renameSync(temp, file);
+      cooldownUntil = 0; lastError = null; res.json(status());
+    } catch { res.status(503).json({ error: { code: "routing_config_write_failed" } }); }
+  });
+  router.post(["/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses"], async (req, res, next) => {
+    const started = Date.now(); let cfg: RoutingSettings;
+    try { cfg = read(); } catch { res.status(503).json({ error: { code: "routing_config_invalid" } }); return; }
+    const mode = (req.header("X-Codex-Proxy-Backend") || cfg.mode) as Mode;
+    if (!["auto", "web", "codex"].includes(mode)) { res.status(400).json({ error: { code: "invalid_backend" } }); return; }
+    const body = req.body; const chat = req.path.endsWith("/chat/completions");
+    if (body?.model !== undefined && typeof body.model !== "string") { res.status(400).json({ error: { code: "invalid_model" } }); return; }
+    const fallback = (reason?: string) => {
+      if (res.destroyed) return;
+      counts.codex++; if (reason) counts.fallbacks++;
+      res.setHeader("X-Codex-Proxy-Backend", "codex");
+      if (reason) res.setHeader("X-Codex-Proxy-Fallback", reason.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 100));
+      res.locals.codexTimeoutMs = Math.max(1000, CONFIG.defaultTimeoutMs - (Date.now() - started));
+      next();
+    };
+    if (mode === "codex") { fallback(); return; }
+    if (mode === "auto" && body?.model && body.model !== CONFIG.defaultModel && !body.model.startsWith("chatgpt-web/")) {
+      fallback("explicit_codex_model"); return;
+    }
+    // Explicit web model names are never silently sent to a different backend.
+    const explicitWebModel = typeof body?.model === "string" && body.model.startsWith("chatgpt-web/");
+    const mayFallback = mode === "auto" && !explicitWebModel;
+    if (!body || !compatible(body, chat)) {
+      if (mayFallback) fallback("unsupported_web_request");
+      else res.status(400).json({ error: { code: "unsupported_web_request", message: "Web mode accepts text history; tools and previous_response_id require Codex or full history." } });
+      return;
+    }
+    if (busy || Date.now() < cooldownUntil) {
+      const reason = busy ? "web_busy" : "web_cooldown";
+      if (mayFallback) fallback(reason); else res.status(503).json({ error: { code: reason } });
+      return;
+    }
+    busy = true;
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), cfg.web_timeout_ms);
+    const onClose = () => { if (!res.writableEnded) abort.abort(); };
+    res.on("close", onClose);
+    try {
+      const headers = { "content-type": "application/json", authorization: `Bearer ${process.env.LEARNING_PROXY_KEY || ""}` };
+      const health = await request(`${cfg.web_base_url}/health`, { headers, signal: AbortSignal.any([abort.signal, AbortSignal.timeout(2000)]) });
+      if (!health.ok) throw new WebError(503, "web_unavailable");
+      const state: any = await health.json();
+      if (state.ready !== true) throw new WebError(503, state.login_required ? "web_login_required" : "web_not_ready");
+      const effort = body.reasoning_effort || body.reasoning?.effort;
+      const effortModels: Record<string, string> = { none: "light", minimal: "light", low: "light", medium: "medium", high: "high", xhigh: "extra-high", max: "pro" };
+      if (effort && !effortModels[effort]) throw new WebError(503, "web_effort_unavailable");
+      const model = explicitWebModel ? body.model : effortModels[effort] ? `chatgpt-web/${effortModels[effort]}` : cfg.web_model;
+      if (state.capabilities && ((!state.capabilities.solAvailable && !["chatgpt-web/luna", "chatgpt-web/think"].includes(model))
+        || (model === "chatgpt-web/pro" && !state.capabilities.proAvailable)
+        || (model === "chatgpt-web/extra-high" && !state.capabilities.extraHighAvailable))) throw new WebError(503, "web_model_unavailable");
+      const upstream = await request(`${cfg.web_base_url}/v1/responses`, { method: "POST", headers,
+        body: JSON.stringify(toWebRequest(body, chat, model)), signal: abort.signal });
+      if (!upstream.ok) {
+        const error: any = await upstream.json().catch(() => ({}));
+        throw new WebError(upstream.status, error.error?.code || "web_http_error");
+      }
+      const commit = () => {
+        res.setHeader("X-Codex-Proxy-Backend", "web");
+        res.setHeader("X-Codex-Proxy-Model", model);
+      };
+      if (!body.stream) {
+        const result: any = await upstream.json(); const error = responseError(result); if (error) throw error;
+        if (result.status !== "completed") throw new WebError(502, "web_response_incomplete");
+        commit(); counts.web++; lastError = null; cooldownUntil = 0;
+        res.json(chat ? { id: result.id || `chatcmpl-${randomUUID()}`, object: "chat.completion", created: result.created_at || Math.floor(Date.now()/1000),
+          model: result.model || model, choices: [{ index: 0, message: { role: "assistant", content: textOf(result) }, finish_reason: "stop" }], usage: chatUsage(result.usage) } : result);
+      } else {
+        if (!upstream.body) throw new WebError(502, "web_empty_stream");
+        let committed = false; let completed = false; const pending: any[] = []; let pendingSize = 0;
+        const id = `chatcmpl-${randomUUID()}`; const created = Math.floor(Date.now()/1000);
+        const chunk = (delta: any, finish: string | null = null, usage?: any) => res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model,
+          choices: usage ? [] : [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage: chatUsage(usage) } : {}) })}\n\n`);
+        for await (const event of sseEvents(upstream.body)) {
+          if (event.type === "error" || event.type === "response.failed" || event.type === "response.incomplete")
+            throw responseError(event.response || { error: event.error || event }) || new WebError(502, "web_stream_failed");
+          if (event.type === "response.completed") {
+            const error = responseError(event.response); if (error) throw error;
+            if (event.response?.status !== "completed") throw new WebError(502, "web_response_incomplete");
+          }
+          const meaningful = event.type === "response.output_text.delta" || event.type === "response.refusal.delta" || event.type === "response.completed";
+          if (!committed && !meaningful) {
+            pendingSize += JSON.stringify(event).length;
+            if (pendingSize > 1024 * 1024) throw new WebError(502, "web_prelude_too_large");
+            pending.push(event); continue;
+          }
+          if (!committed) {
+            commit(); res.setHeader("Content-Type", "text/event-stream"); res.setHeader("Cache-Control", "no-cache"); res.setHeader("X-Accel-Buffering", "no");
+            committed = true;
+            if (chat) chunk({ role: "assistant", content: "" }); else for (const item of pending) writeEvent(res, item);
+          }
+          if (!chat) writeEvent(res, event);
+          else if (event.type === "response.output_text.delta") chunk({ content: event.delta });
+          else if (event.type === "response.refusal.delta") chunk({ refusal: event.delta });
+          if (event.type === "response.completed") {
+            completed = true;
+            if (chat) { chunk({}, "stop"); if (body.stream_options?.include_usage) chunk({}, null, event.response?.usage); res.write("data: [DONE]\n\n"); }
+            break;
+          }
+        }
+        if (!completed) throw new WebError(502, "web_stream_interrupted");
+        counts.web++; lastError = null; cooldownUntil = 0; res.end();
+      }
+    } catch (error) {
+      const failure = error instanceof WebError ? error : new WebError(502, abort.signal.aborted ? "web_timeout" : "web_unavailable");
+      lastError = failure.code; cooldownUntil = Date.now() + cfg.cooldown_seconds * 1000;
+      if (res.destroyed) return;
+      if (res.headersSent) {
+        const payload = { error: { code: failure.code, message: "Web response interrupted; no backend switch after output." } };
+        if (chat) res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        else writeEvent(res, { type: "error", ...payload });
+        res.end();
+      } else if (mayFallback && (failure.status >= 500 || [401, 403, 429].includes(failure.status))) fallback(failure.code);
+      else res.status(failure.status).json({ error: { code: failure.code, message: "Web backend could not complete this request." } });
+    } finally { clearTimeout(timer); res.off("close", onClose); busy = false; abort.abort(); }
+  });
+  return router;
+}

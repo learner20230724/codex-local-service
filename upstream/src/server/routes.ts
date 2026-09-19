@@ -162,7 +162,7 @@ export function createRouter(): Router {
     trace("route.chat_completions.model", { requestId, requestedModel: body.model, resolvedModel: model, label });
 
     const { prompt, imageUrls, options } = chatRequestToOptions(body, {
-      timeoutMs: CONFIG.defaultTimeoutMs,
+      timeoutMs: Math.min(CONFIG.defaultTimeoutMs, res.locals.codexTimeoutMs ?? CONFIG.defaultTimeoutMs),
       initTimeoutMs: CONFIG.initTimeoutMs,
       turnStartTimeoutMs: CONFIG.turnStartTimeoutMs,
     });
@@ -320,7 +320,7 @@ export function createRouter(): Router {
     trace("route.responses.model", { requestId, requestedModel: body.model, resolvedModel: model, label });
 
     const { prompt, imageUrls, options } = responsesRequestToOptions(body, {
-      timeoutMs: CONFIG.defaultTimeoutMs,
+      timeoutMs: Math.min(CONFIG.defaultTimeoutMs, res.locals.codexTimeoutMs ?? CONFIG.defaultTimeoutMs),
       initTimeoutMs: CONFIG.initTimeoutMs,
       turnStartTimeoutMs: CONFIG.turnStartTimeoutMs,
     });

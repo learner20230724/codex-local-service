@@ -14,12 +14,17 @@ CONFIG = Path('/etc/codex-proxy/client.json')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['info', 'check', 'smoke', 'run'])
+    parser.add_argument('action', choices=['info', 'check', 'smoke', 'run', 'mode', 'web-status', 'web-login', 'web-login-stop', 'resources'])
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     config = json.loads(CONFIG.read_text())
     if args.action == 'info':
         print(json.dumps(config, ensure_ascii=False, indent=2))
+        return
+    if args.action == 'resources':
+        import subprocess
+        subprocess.run(['systemctl', 'show', 'codex-proxy.service', 'codex-proxy-web.service',
+                        '-p', 'Id', '-p', 'ActiveState', '-p', 'MemoryCurrent', '-p', 'MemoryPeak', '-p', 'CPUUsageNSec', '-p', 'TasksCurrent'], check=True)
         return
     key = Path(config['api_key_file']).read_text().strip()
     if not key:
@@ -40,17 +45,39 @@ def main():
         os.execvpe(command[0], command, env)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     start = time.monotonic()
-    if args.action == 'check':
+    method = None
+    if args.action == 'mode':
+        if args.command and args.command not in [['auto'], ['web'], ['codex']]:
+            parser.error('mode accepts auto, web, or codex; omit to inspect')
+        url = config['base_url'].removesuffix('/v1') + '/routing'
+        data = json.dumps({'mode': args.command[0]}).encode() if args.command else None
+        timeout, method = 10, 'PUT' if data else 'GET'
+    elif args.action.startswith('web-'):
+        web = json.loads(Path('/etc/codex-proxy/web.json').read_text())
+        path = {'web-status': '/health', 'web-login': '/login/start', 'web-login-stop': '/login/stop'}[args.action]
+        url = f"http://127.0.0.1:{web.get('port', 3468)}{path}"
+        data, timeout = (None if args.action == 'web-status' else b'{}'), 45
+    elif args.action == 'check':
         url, data, timeout = config['base_url'].removesuffix('/v1') + '/health', None, 10
     else:
         url = config['base_url'] + '/chat/completions'
         data = json.dumps({'model': config['model'], 'stream': False,
                            'messages': [{'role': 'user', 'content': 'Reply exactly CODEX_PROXY_OK. Do not use tools.'}]}).encode()
         timeout = config['timeout_seconds']
-    req = urllib.request.Request(url, data=data,
-                                 headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'})
+    headers = {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}
+    if args.action == 'smoke' and args.command:
+        if args.command not in [['auto'], ['web'], ['codex']]:
+            parser.error('smoke accepts auto, web, or codex')
+        headers['X-Codex-Proxy-Backend'] = args.command[0]
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers=headers)
     with opener.open(req, timeout=timeout) as response:
         result = json.load(response)
+        backend = response.headers.get('X-Codex-Proxy-Backend')
+        fallback = response.headers.get('X-Codex-Proxy-Fallback')
+    if args.action in ['mode', 'web-status', 'web-login', 'web-login-stop']:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
     if args.action == 'check':
         if result.get('status') != 'ok':
             raise ValueError('Unexpected health response.')
@@ -60,7 +87,7 @@ def main():
         if content.strip() != 'CODEX_PROXY_OK' or result.get('error'):
             raise ValueError('Inference did not return the expected smoke-test response.')
         usage = result.get('usage', {})
-        print(json.dumps({'ok': True, 'model': result.get('model'), 'reply': content,
+        print(json.dumps({'ok': True, 'model': result.get('model'), 'backend': backend, 'fallback': fallback, 'reply': content,
                           'seconds': round(time.monotonic() - start, 2),
                           'tokens': {k: usage.get(k) for k in ['prompt_tokens', 'completion_tokens', 'total_tokens']}},
                          ensure_ascii=False, indent=2))

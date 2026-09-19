@@ -16,6 +16,8 @@ description: 为这台服务器上的项目接入、检查或维护已部署的 
 
 现有服务已经安装并开机自启。普通项目接入不需要再部署一套代理、重新登录或更改全局 Codex provider。保留用户现有模型选择；未指定时采用服务配置中的默认值。多个项目共享当前账户额度和 2 个池工作进程，应用需要合理排队和限流。
 
+若已安装网页通道，同一入口支持 `codex-proxyctl mode auto|web|codex`。`auto` 优先 ChatGPT 非个性化临时聊天，网页未登录、限额或服务故障时使用现有 Codex；响应头会标明实际后端。单网页任务并发，额外并发走 Codex；不支持的网页请求也保留原 Codex 行为。`web-status` 检查登录，`resources` 查看整个服务进程组资源，`smoke web` 才是网页真实调用验证。详细接入与边界见 [网页通道说明](../../docs/web-routing.md)。
+
 ## 必须保留的本机约定
 
 - 由项目后端访问，前端不携带代理密钥；本机密钥不是 OpenAI Platform API key。不要读取、复制或显示 Codex 的 `auth.json`。

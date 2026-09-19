@@ -2,6 +2,8 @@
 
 把本机已登录的官方 Codex 整理成可供多个项目复用的本地推理服务：固定 HTTP 入口、systemd 守护、独立本机密钥，以及供 Codex 自动发现的接入 Skill。
 
+现支持可选的 **ChatGPT 网页临时聊天优先、Codex 备用**：同一入口用 `codex-proxyctl mode auto|web|codex` 切换，普通文本与流式请求自动调配。网页端在无桌面 Linux 的虚拟屏幕里运行，强制临时聊天和非个性化；首次需要用户网页登录。接入、切换边界和资源检查见 [网页通道说明](docs/web-routing.md)。
+
 基于 [mehdic/codex-proxy](https://github.com/mehdic/codex-proxy) `0.4.8`，固定提交 `da828dafa0bb98a932e022edb608e6b35f0a8d9b`，保留原有 MIT 许可及本机加固补丁。仓库包含可构建的上游源码，不包含账号凭据、代理密钥、业务数据或 node_modules。
 
 ```text

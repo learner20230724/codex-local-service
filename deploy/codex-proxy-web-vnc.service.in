@@ -1,0 +1,11 @@
+[Unit]
+Description=Temporary local VNC for Codex web login
+After=codex-proxy-web.service
+Requires=codex-proxy-web.service
+
+[Service]
+User=@SERVICE_USER@
+Group=@SERVICE_USER@
+ExecStart=/usr/bin/x11vnc -display :97 -auth /var/lib/codex-proxy/web/Xauthority -localhost -rfbport 5907 -forever -shared -nopw -noxdamage -quiet
+RuntimeMaxSec=1800
+UMask=0077

@@ -1,0 +1,11 @@
+[Unit]
+Description=Temporary local noVNC for Codex web login
+After=codex-proxy-web-vnc.service
+Requires=codex-proxy-web-vnc.service
+
+[Service]
+User=@SERVICE_USER@
+Group=@SERVICE_USER@
+ExecStart=/usr/bin/websockify --web=/usr/share/novnc 127.0.0.1:6087 127.0.0.1:5907
+RuntimeMaxSec=1800
+UMask=0077
