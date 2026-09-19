@@ -37,6 +37,7 @@ codex-proxyctl smoke codex      # 必须由 Codex 成功回答
 - 网页健康/登录检查失败、额度限制、服务故障或超时可以转 Codex；请求本身的 400 错误不会通过切换重试。
 - 网页一次只接受一个推理任务；auto 的并发溢出走 Codex，web 模式繁忙返回 503。登录窗口打开时也不接受网页推理。
 - SSE 的元信息先缓冲，第一段实质输出发给调用方后不再自动切换；中断返回错误，不把两个模型的答案拼接起来。
+- 适配器为普通 API 消息补齐独立消息和轮次标识；不需要调用方伪造 Codex 内部字段，字符串形式的 Responses 输入也会标准化。
 - 默认网页预算 120 秒，备用 Codex 使用原请求总预算剩余时间。一次失败后网页冷却 60 秒，可用 `mode auto` 清除冷却。流式响应没有完成事件时不能当作成功。
 
 ## 无桌面 Linux 与首次登录
@@ -67,6 +68,8 @@ sudo python3 scripts/install-web.py --user ubuntu \
 `codex-proxyctl web-login-stop` 可提前关闭浏览器登录窗口。远程维护代理也应设置 30 分钟期限并在登录后关闭；重新绑定时重新开启，不把它当常驻公开页面。
 
 若 Google 报 “This browser or app may not be secure”，参考 [Google 支持的浏览器说明](https://support.google.com/accounts/answer/7675428?hl=en)。初版集成的 Playwright 登录窗口已替换为普通人工 Chrome。不要反复重试自动化登录，也不要关闭账号验证；如果普通浏览器仍被拒绝，需要按账号提供方提示处理受支持浏览器、网络或账号验证问题。登录时必须继续使用原账号的登录方式。
+
+登录成功后仍可能遇到对话接口的网页验证。日志中的 `codex_web.http_failure` 仅记录请求类别、状态、响应类型和是否被挑战，不记录正文、凭据或账号标识；`challenge: true` 时先由用户在普通浏览器验证能否正常发消息。不要把网页登录成功或 `web-status.ready` 等同于网页推理通过。发送时的 `codex_web.privacy_request` 只记录可观察到的临时/禁用历史布尔标记，不记录请求内容。
 
 仓库提供 `deploy/codex-proxy-web-vnc.service.in` 与 `deploy/codex-proxy-web-login.service.in` 模板（需要 x11vnc/noVNC/websockify），默认均只监听回环且 30 分钟到期。可用 SSH 本地转发访问 6087；使用 Caddy 时必须将整个 noVNC 静态目录和 WebSocket 路径一起置于已有 HTTPS 认证之后。登录结束后停止两个维护单元。浏览器状态只存服务用户私有目录，不能将 profile 或 storage-state 放到网页目录。
 

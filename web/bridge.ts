@@ -1,6 +1,6 @@
 /** Private single-slot browser-only service. No Codex login/configuration or native tools. */
 import { readFileSync, mkdirSync, rmSync } from "node:fs";
-import { timingSafeEqual, randomUUID } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 import { chromium } from "../.runtime/web/node_modules/playwright-core/index.mjs";
 import { defaultConfig, atomicWriteFile } from "../.runtime/web/src/config";
@@ -11,6 +11,7 @@ import { closeChatGptBrowserWorkers, dismissChatGptTemporaryChatOnboarding } fro
 import { chatGptTurnSessions } from "../.runtime/web/src/adapters/chatgpt-web/turn-execution";
 import { ensureUnpersonalized } from "./privacy";
 import { ManualLogin } from "./manual-login";
+import { prepareBrowserRequest } from "./request";
 
 const client = JSON.parse(readFileSync("/etc/codex-proxy/client.json", "utf8"));
 const key = readFileSync(client.api_key_file, "utf8").trim();
@@ -60,16 +61,20 @@ async function captureManualLogin(signal: AbortSignal) {
     context = await browser.newContext({ storageState: state });
     signal.throwIfAborted();
     const verified = await context.newPage();
+    // Observe the page's own authenticated account request. An extra auth/session probe can
+    // receive a 403 challenge even while the logged-in app's account APIs succeed.
+    const account = verified.waitForResponse((response: any) => {
+      const url = new URL(response.url());
+      return url.origin === "https://chatgpt.com" && url.pathname === "/backend-api/me" && response.status() === 200;
+    }, { timeout: 30000 }).then(async (response: any) => {
+      const me = await response.json(); return typeof me.id === "string" && me.id.length > 0;
+    }).catch(() => false);
     await verified.goto(CHATGPT_TEMPORARY_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-    const authenticated = await verified.evaluate(async () => {
-      try { const r = await fetch("/api/auth/session"); const session = await r.json(); return !!session.user && !!session.accessToken; }
-      catch { return false; }
-    });
-    if (!authenticated) throw new Error("web_login_required");
     await verified.locator('#prompt-textarea,[data-testid="prompt-textarea"]').first().waitFor({ state: "visible", timeout: 30000 });
+    if (!await account) throw new Error("web_login_verification_failed");
     await dismissChatGptTemporaryChatOnboarding(verified);
     await ensureUnpersonalized(verified);
-    const capabilities = await detectChatGptAccountCapabilities(verified);
+    const capabilities = await detectChatGptAccountCapabilities(verified, { stableAbsenceMs: 10000 });
     const freshState = sanitizeBrowserLoginStorageState(await context.storageState());
     signal.throwIfAborted();
     mkdirSync(join(stateDir, "browser"), { recursive: true, mode: 0o700 });
@@ -118,13 +123,11 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.CODEX
     try { body = await req.json(); } catch { return error(400, "invalid_json"); }
     if (!/^chatgpt-web\/(light|medium|high|extra-high|pro|luna|think)$/.test(body.model || "")
       || body.tools?.length || body.previous_response_id) return error(400, "unsupported_web_request");
+    try { body = prepareBrowserRequest(body); } catch { return error(400, "unsupported_web_input"); }
     busy = true;
     let cleaning: Promise<void> | undefined;
     const finish = () => cleaning ??= cleanupTurn();
     Object.assign(config, storedBrowserLoginCapabilities(config));
-    const thread = randomUUID(); const turn = randomUUID();
-    body.client_metadata = { "x-codex-turn-metadata": JSON.stringify({ thread_id: thread, turn_id: turn }) };
-    body.store = false;
     try {
       const response = await responseRequest(new Request("http://127.0.0.1/v1/responses", {
         method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" }, signal: req.signal,
