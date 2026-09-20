@@ -17,9 +17,15 @@ Its full MIT notice is also included in `UPSTREAM_NOTICE`.
 
 Local changes limit this worker to one already-authorized ChatGPT account and
 text inference. There is no account registration, account pool, external
-challenge service, external prompt review, tool execution, global settings
+challenge service, external prompt review, local tool execution, global settings
 mutation or access to Codex OAuth credentials. Cloudflare challenge pages and
 unsupported verification fail to the gateway's normal Codex fallback.
+
+ChatGPT may still invoke its own hosted web search while answering a plain text
+request. This was observed in real upstream `web.run` events without explicit
+search flags. The current adapter forwards final text, not search progress or
+complete citation metadata; explicit API tool declarations remain unsupported.
+See [search validation](../../docs/search-validation.md).
 
 All conversation requests set `history_and_training_disabled=true` and
 `temporary_chat_requests_personalization=false`, use fresh parent/message IDs,

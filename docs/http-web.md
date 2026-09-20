@@ -43,6 +43,8 @@ python3 -m venv /opt/codex-proxy-web/http-venv
 
 ## 接口与隐私边界
 
+已实测 ChatGPT 可以根据普通文本问题自行调用内置 `web.run` 搜索；无需调用方传入工具列表。当前仅转发最终正文，搜索来源注释和进度尚未完整映射，且原生 Codex 备用关闭了联网搜索。详见[搜索验证记录](search-validation.md)。下文“不支持工具”指调用方显式声明的 API 工具，不代表禁止 ChatGPT 在服务端自行搜索。
+
 - 支持 Chat Completions / Responses 的普通文本、完整多轮历史、JSON 和 SSE。每个请求独立创建临时会话；历史由调用方提供，不复用服务器上的会话 ID。
 - 每次发送强制 `history_and_training_disabled=true`、`temporary_chat_requests_personalization=false`。不更新全局个性化设置，不把普通会话创建后再删除当作临时聊天。
 - HTTP 直接读取文本，不经过浏览器 DOM→Markdown 转义。上游流转交 WebSocket 时只订阅本次请求的 topic，并处理历史回显、重放与终止事件。

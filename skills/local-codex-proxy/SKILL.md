@@ -22,6 +22,8 @@ description: 为这台服务器上的项目接入、检查或维护已部署的 
 
 本机新增 `transport=http` 通道，普通推理无需 Chrome/Xvfb。网页默认 `chatgpt-web/gpt-6-astra`，实际上游 `gpt-6-astra-wm`，低思考强度映射 Light thinking（`min`）；原生备用仍为 `gpt-6-astra`。以实际 routing.json 与 web-status 为准。已有网页登录应直接复用，`codex-proxyctl web-refresh` 仅临时启动浏览器来刷新现有会话，结束后关闭；不要默认要求用户重新登录。凭据只在私有状态目录中，不输出或提交。HTTP 通道设置见[说明](../../docs/http-web.md)。
 
+网页内置搜索已实测：普通文本请求可由 ChatGPT 自己调用 `web.run`，不要求 API tools 参数。显式传入工具仍按原规则处理；不要据此误判网页搜索被关闭。当前搜索进度/引用元数据尚未完整透传，原生 Codex 备用的 web_search 仍为 disabled，因此回退后搜索能力不同。[验证记录](../../docs/search-validation.md)。
+
 首次网页登录使用 `web-login` 开启普通人工 Chrome，登录阶段不连接自动化。用户确认看到 ChatGPT 聊天页后运行 `web-login-finish`，或让用户关闭专用窗口，才开始验证与绑定。不得在用户尚未完成输入时运行 finish；`web-status` 的 waiting_for_login 不代表已认证。维护入口约 30 分钟过期，收到用户报错后先核对服务与登录期限。
 
 ## 必须保留的本机约定
