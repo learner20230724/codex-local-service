@@ -3,13 +3,14 @@ import { readFileSync, statSync } from "node:fs";
 import { timingSafeEqual, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { HttpWebError, runHttpWorker } from "./http-process";
+import { httpConcurrency } from "./concurrency";
 
 const client = JSON.parse(readFileSync("/etc/codex-proxy/client.json", "utf8"));
 const key = readFileSync(client.api_key_file, "utf8").trim();
 const stateDir = process.env.CODEX_CHATGPT_WEB_HOME || "/var/lib/codex-proxy/web";
 const model = "chatgpt-web/gpt-6-astra";
 const worker = join(import.meta.dir, "http", "worker.py");
-let busy = false, completed = 0;
+let active = 0, completed = 0;
 const shutdown = new AbortController();
 const errorResponse = (status: number, code: string) => Response.json({ error: { code, message: code } }, { status });
 function authorized(req: Request) {
@@ -43,20 +44,21 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.CODEX
     if (req.method === "GET" && path === "/health") {
       const state = credentialStatus();
       return Response.json({ status: "ok", backend: "web", mode: "http", transport: "http", ...state,
-        login_required: !state.ready, browser_required: false, busy, concurrency: 1, finished_requests: completed,
+        login_required: !state.ready, browser_required: false, busy: active >= httpConcurrency(), active_requests: active,
+        concurrency: httpConcurrency(), finished_requests: completed,
         supported_models: [model], default_model: model, upstream_model: "gpt-6-astra-wm", thinking_effort: "min",
         temporary_chat: true, personalization: false, pid: process.pid, memory: process.memoryUsage() });
     }
     if (req.method !== "POST" || path !== "/v1/responses") return errorResponse(404, "not_found");
-    if (busy) return errorResponse(503, "web_busy");
+    if (active >= httpConcurrency()) return errorResponse(503, "web_busy");
     const state = credentialStatus();
     if (!state.ready) return errorResponse(503, state.code || "web_session_invalid");
     let body: any;
     try { body = await req.json(); } catch { return errorResponse(400, "invalid_json"); }
     if (!body || body.model !== model || body.tools?.length || body.previous_response_id) return errorResponse(400, "unsupported_web_request");
     // Another request can acquire the slot while this body is still arriving.
-    if (busy) return errorResponse(503, "web_busy");
-    busy = true;
+    if (active >= httpConcurrency()) return errorResponse(503, "web_busy");
+    active++;
     const cancel = new AbortController();
     const signal = AbortSignal.any([req.signal, cancel.signal, shutdown.signal]);
     const events = runHttpWorker(body, { python: process.env.CODEX_WEB_HTTP_PYTHON || "/opt/codex-proxy-web/http-venv/bin/python", worker, signal });
@@ -64,7 +66,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.CODEX
     let text = "", effort = "min", sequence = 0, cancelled = false, itemStarted = false;
     const packet = (value: any) => new TextEncoder().encode(`event: ${value.type}\ndata: ${JSON.stringify({ ...value, sequence_number: sequence++ })}\n\n`);
     let cleaning: Promise<void> | undefined;
-    const cleanup = () => cleaning ??= (async () => { cancel.abort(); await events.return(undefined).catch(() => {}); busy = false; })();
+    const cleanup = () => cleaning ??= (async () => { cancel.abort(); await events.return(undefined).catch(() => {}); active--; })();
     if (!body.stream) {
       try {
         for await (const event of events) {

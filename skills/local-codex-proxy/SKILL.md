@@ -16,7 +16,9 @@ description: 为这台服务器上的项目接入、检查或维护已部署的 
 
 现有服务已经安装并开机自启。普通项目接入不需要再部署一套代理、重新登录或更改全局 Codex provider。保留用户现有模型选择；未指定时采用服务配置中的默认值。多个项目共享当前账户额度和 2 个池工作进程，应用需要合理排队和限流。
 
-若已安装网页通道，同一入口支持 `codex-proxyctl mode auto|web|codex`。`auto` 优先 ChatGPT 非个性化临时聊天，网页未登录、限额或服务故障时使用现有 Codex；响应头会标明实际后端。单网页任务并发，额外并发走 Codex；不支持的网页请求也保留原 Codex 行为。`web-status` 检查登录，`resources` 查看整个服务进程组资源，`smoke web` 才是网页真实调用验证。详细接入与边界见 [网页通道说明](../../docs/web-routing.md)。
+若已安装网页通道，同一入口支持 `codex-proxyctl mode auto|web|codex`。`auto` 优先 ChatGPT 非个性化临时聊天，网页未登录、限额或服务故障时使用现有 Codex；响应头会标明实际后端。HTTP 网页并发通过 `codex-proxyctl concurrency 1`～`5` 调整，额外并发走 Codex；旧浏览器通道仍为单路。不支持的网页请求也保留原 Codex 行为。`web-status` 检查登录，`resources` 查看整个服务进程组资源，`smoke web` 才是网页真实调用验证。详细接入与边界见 [网页通道说明](../../docs/web-routing.md)。
+
+`codex-proxyctl stats` 查看今天，`stats 7` 查看最近七天，`stats YYYY-MM-DD` 查看指定日期，加 `--json` 输出机器可读统计。按北京时间持久累计调用/成功/失败/取消/回退，区分网页与 Codex，实报与估算 Token 分列。网页为可见文本估算，不含隐藏思考，不是账号剩余额度。统计从启用时开始，正常重启不清零；只保存数字汇总，不记录提示词或回答。详情见[每日统计说明](../../docs/daily-stats.md)。
 
 本机新增 `transport=http` 通道，普通推理无需 Chrome/Xvfb。网页默认 `chatgpt-web/gpt-6-astra`，实际上游 `gpt-6-astra-wm`，低思考强度映射 Light thinking（`min`）；原生备用仍为 `gpt-6-astra`。以实际 routing.json 与 web-status 为准。已有网页登录应直接复用，`codex-proxyctl web-refresh` 仅临时启动浏览器来刷新现有会话，结束后关闭；不要默认要求用户重新登录。凭据只在私有状态目录中，不输出或提交。HTTP 通道设置见[说明](../../docs/http-web.md)。
 

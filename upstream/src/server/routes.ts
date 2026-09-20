@@ -44,6 +44,7 @@ import { CONFIG } from "./config.js";
 import { CodexProxyError, invalidRequestError, mapErrorToHttp } from "./errors.js";
 import { NAME, VERSION } from "./version.js";
 import { annotateTurnUsage } from "./usage.js";
+import { completeStats, selectStatsBackend } from "./daily-stats.js";
 import { pricingSnapshot } from "./pricing.js";
 import type { ChatCompletionRequest, ResponseRequest, ModelObject, ModelListResponse } from "../types/openai.js";
 import { attachPhaseTracker } from "./phase-tracker.js";
@@ -144,6 +145,7 @@ export function createRouter(): Router {
 
   // Chat completions
   const handleChatCompletions = async (req: Request, res: Response) => {
+    selectStatsBackend(res, "codex");
     const body = req.body as ChatCompletionRequest;
     const reqStart = Date.now();
     const requestId = String(res.locals.requestId || uuid());
@@ -226,6 +228,7 @@ export function createRouter(): Router {
         status = "ok";
         trace("route.chat_completions.stream.result", { requestId, result });
         annotateTurnUsage(result, prompt, model);
+        completeStats(res, result.usage, Boolean(result.usageEstimated));
 
         const proxyToolCalls = emulateTools ? extractAllProxyToolCalls(result.text, body) : [];
         if (proxyToolCalls.length > 0) {
@@ -263,6 +266,7 @@ export function createRouter(): Router {
         );
         trace("route.chat_completions.result", { requestId, result });
         annotateTurnUsage(result, prompt, model);
+        completeStats(res, result.usage, Boolean(result.usageEstimated));
         const requestedTool = requestedFunctionTool(body);
         const proxyToolCalls = extractAllProxyToolCalls(result.text, body);
         const response = proxyToolCalls.length > 1
@@ -302,6 +306,7 @@ export function createRouter(): Router {
 
   // Responses API
   const handleResponses = async (req: Request, res: Response) => {
+    selectStatsBackend(res, "codex");
     const body = req.body as ResponseRequest;
     const reqStart = Date.now();
     const requestId = String(res.locals.requestId || uuid());
@@ -416,6 +421,7 @@ export function createRouter(): Router {
         status = "ok";
         trace("route.responses.stream.result", { requestId, result });
         annotateTurnUsage(result, prompt, model);
+        completeStats(res, result.usage, Boolean(result.usageEstimated));
 
         // output_text.done
         safeWrite(makeResponseTextDoneEvent(0, 0, result.text, { responseId: respId, itemId: outputId }));
@@ -477,6 +483,7 @@ export function createRouter(): Router {
         );
         trace("route.responses.result", { requestId, result });
         annotateTurnUsage(result, prompt, model);
+        completeStats(res, result.usage, Boolean(result.usageEstimated));
         const response = turnResultToResponseObject(result, model, {
           instructions: body.instructions ?? null,
           metadata: body.metadata,

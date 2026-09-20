@@ -8,13 +8,34 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+
+def print_stats(result):
+    since = datetime.fromisoformat(result['tracking_since'].replace('Z', '+00:00')).astimezone(ZoneInfo(result['timezone']))
+    print(f"按 {result['timezone']} 统计；开始记录：{since:%Y-%m-%d %H:%M:%S}")
+    print(f"存储：{result['persistence']}；进行中的请求：{result['active_requests']}")
+    print('日期         后端      调用  成功  失败  取消  回退    实报输入/输出      估算输入/输出   用量未知')
+    names = {'web': '网页', 'codex': 'Codex', 'unrouted': '未路由'}
+    for day in result['days']:
+        for backend, b in [('total', day['totals']), *day['backends'].items()]:
+            if backend != 'total' and not b['requests']:
+                continue
+            known, estimated = b['reported_tokens'], b['estimated_tokens']
+            label = '合计' if backend == 'total' else names[backend]
+            print(f"{day['date']}  {label:<6} {b['requests']:>4} {b['succeeded']:>5} {b['failed']:>5} "
+                  f"{b['cancelled']:>5} {b['fallbacks']:>5} "
+                  f"{known['input']:>8}/{known['output']:<8} {estimated['input']:>8}/{estimated['output']:<8} {b['unknown_usage_requests']:>5}")
+    print('Token 的实报与估算分开累计；网页估算仅含可见文本，不含隐藏思考，也不代表账号剩余额度。')
+    print('每个接口请求计一次；回退后归入最终后端。未知用量不代表零消耗，启用前不补记。')
 
 CONFIG = Path('/etc/codex-proxy/client.json')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['info', 'check', 'smoke', 'run', 'mode', 'web-status', 'web-login', 'web-login-stop', 'web-login-finish', 'web-refresh', 'resources'])
+    parser.add_argument('action', choices=['info', 'check', 'smoke', 'run', 'mode', 'stats', 'concurrency', 'web-status', 'web-login', 'web-login-stop', 'web-login-finish', 'web-refresh', 'resources'])
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.action == 'web-refresh':
@@ -48,7 +69,30 @@ def main():
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     start = time.monotonic()
     method = None
-    if args.action == 'mode':
+    if args.action == 'stats':
+        parts = [part for part in args.command if part != '--json']
+        if len(parts) > 1:
+            parser.error('stats accepts a day count (1–366) or YYYY-MM-DD, optionally --json')
+        query = ''
+        if parts:
+            value = parts[0]
+            if value.isdigit() and 1 <= int(value) <= 366:
+                query = '?days=' + str(int(value))
+            else:
+                try:
+                    if date.fromisoformat(value).isoformat() != value:
+                        raise ValueError()
+                except ValueError:
+                    parser.error('stats accepts a day count (1–366) or YYYY-MM-DD')
+                query = '?date=' + value
+        url, data, timeout = config['base_url'].removesuffix('/v1') + '/stats' + query, None, 10
+    elif args.action == 'concurrency':
+        if args.command and (len(args.command) != 1 or args.command[0] not in ['1', '2', '3', '4', '5']):
+            parser.error('concurrency accepts 1–5; omit to inspect')
+        url = config['base_url'].removesuffix('/v1') + '/routing'
+        data = json.dumps({'web_concurrency': int(args.command[0])}).encode() if args.command else None
+        timeout, method = 10, 'PUT' if data else 'GET'
+    elif args.action == 'mode':
         if args.command and args.command not in [['auto'], ['web'], ['codex']]:
             parser.error('mode accepts auto, web, or codex; omit to inspect')
         url = config['base_url'].removesuffix('/v1') + '/routing'
@@ -77,7 +121,13 @@ def main():
         result = json.load(response)
         backend = response.headers.get('X-Codex-Proxy-Backend')
         fallback = response.headers.get('X-Codex-Proxy-Fallback')
-    if args.action in ['mode', 'web-status', 'web-login', 'web-login-stop', 'web-login-finish']:
+    if args.action == 'stats':
+        if '--json' in args.command:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print_stats(result)
+        return
+    if args.action in ['mode', 'concurrency', 'web-status', 'web-login', 'web-login-stop', 'web-login-finish']:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
     if args.action == 'check':

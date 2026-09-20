@@ -47,7 +47,7 @@ python3 -m venv /opt/codex-proxy-web/http-venv
 - 每次发送强制 `history_and_training_disabled=true`、`temporary_chat_requests_personalization=false`。不更新全局个性化设置，不把普通会话创建后再删除当作临时聊天。
 - HTTP 直接读取文本，不经过浏览器 DOM→Markdown 转义。上游流转交 WebSocket 时只订阅本次请求的 topic，并处理历史回显、重放与终止事件。
 - 工具、图像、音频、后台任务及 previous_response_id 仍不走网页通道。JSON 格式以提示词约束，不保证官方 Structured Outputs 的严格语法约束；max_output_tokens 没有上游硬限制保证。网页端未提供精确用量时 Responses 省略 usage，Chat 兼容输出中的零值表示未知，不能用于计费。
-- 单网页槽位；超额并发走 Codex。输出前错误可以回退；输出之后发生错误不能拼接另一个模型的答案。工作进程在请求取消或超时后清理。
+- HTTP 网页支持 1～5 个独立槽位，通过 `codex-proxyctl concurrency 3` 等命令调整；超额并发走 Codex。输出前错误可以回退；输出之后发生错误不能拼接另一个模型的答案。工作进程在请求取消或超时后清理。每日调用及用量通过 `codex-proxyctl stats` 查看，网页 Token 估算独立记录；详见[统计与并发说明](daily-stats.md)。
 - HTTP 模式只提供新的 GPT-6 网页型号；旧 light/high 等浏览器型号由 `transport=browser` 提供。回滚时同时恢复浏览器 web_model，并在无在途请求时重启网页服务。
 
 Python 进程及协议改动采用独立目录中的 AGPL-3.0-only 许可，保留原作者和 MIT 上游声明；详见 [HTTP 组件说明](../web/http/README.md) 和 [第三方声明](../THIRD_PARTY_NOTICES.md)。

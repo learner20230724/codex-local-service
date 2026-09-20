@@ -14,7 +14,9 @@
 ## 开关和状态
 
 ```bash
-codex-proxyctl mode             # 当前模式、网页忙碌、冷却原因和请求计数
+codex-proxyctl mode             # 当前模式、网页忙碌、冷却原因和本次进程计数
+codex-proxyctl stats            # 按天持久统计，实报/估算 Token 分开显示
+codex-proxyctl concurrency 3    # HTTP 网页并发改为 3 路（支持 1～5）
 codex-proxyctl mode auto        # 网页优先；符合条件的失败转 Codex
 codex-proxyctl mode codex       # 只用原有 Codex
 codex-proxyctl mode web         # 只用网页，失败如实返回
@@ -25,7 +27,7 @@ codex-proxyctl smoke web        # 必须由网页成功回答
 codex-proxyctl smoke codex      # 必须由 Codex 成功回答
 ```
 
-开关写入 `/etc/codex-proxy/routing.json`，下一次请求生效，无需重启。鉴权后的 `GET /routing` 和 `PUT /routing` 提供相同管理能力。`PUT` 请求体只接受 `{"mode":"auto"}`、`web` 或 `codex`。请求头 `X-Codex-Proxy-Backend` 可按次覆盖。
+开关写入 `/etc/codex-proxy/routing.json`，下一次请求生效，无需重启。鉴权后的 `GET /routing` 和 `PUT /routing` 提供相同管理能力。`PUT` 接受 `{"mode":"auto"}`（也可为 web/codex）或 `{"web_concurrency":3}`，也可同时设置。请求头 `X-Codex-Proxy-Backend` 可按次覆盖。每日统计和 HTTP 并发边界见[说明](daily-stats.md)。
 
 安装器让该配置路径链接到服务用户私有的 `/var/lib/codex-proxy/routing.json`，模式写入采用原子替换，无需放宽整个 `/etc/codex-proxy` 目录权限。手工部署也应采用这一布局。
 

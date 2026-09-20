@@ -23,9 +23,15 @@ async function setup(t: any, reply: (url: string, init: any) => Promise<Response
   const server = createServer(app); await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   const address = server.address() as { port: number };
-  return { post: (body = prompt, backend?: string, path = "/v1/chat/completions") => fetch(`http://127.0.0.1:${address.port}${path}`, {
+  return { post: (body = prompt, backend?: string, path = "/v1/chat/completions", signal?: AbortSignal) => fetch(`http://127.0.0.1:${address.port}${path}`, {
     method: "POST", headers: { "content-type": "application/json", ...(backend ? { "X-Codex-Proxy-Backend": backend } : {}) }, body: JSON.stringify(body),
-  }), counts: () => ({ codex, web }), payloads };
+    signal,
+  }), state: async () => await (await fetch(`http://127.0.0.1:${address.port}/routing`)).json() as any,
+    counts: () => ({ codex, web }), payloads };
+}
+async function until(predicate: () => boolean) {
+  for (let i = 0; i < 100 && !predicate(); i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.ok(predicate(), "condition did not become true");
 }
 test("web-first chat converts full history, returns actual model and usage", async t => {
   const s = await setup(t, url => url.endsWith("/health") ? ok() : Response.json(completed));
@@ -148,6 +154,52 @@ test("web timeout cancels upstream and falls back", async t => {
   }, { ...settings, web_timeout_ms: 30 });
   const r = await s.post(); assert.equal(r.headers.get("x-codex-proxy-fallback"), "web_timeout"); assert.equal(s.counts().codex, 1);
 });
+test("configured web slots run together and overflow goes to Codex", async t => {
+  let release!: () => void; const wait = new Promise<void>(resolve => { release = resolve; });
+  const s = await setup(t, async url => { if (url.endsWith("/health")) return Response.json({ ready: true, concurrency: 3 });
+    await wait; return Response.json(completed); }, { ...settings, web_concurrency: 3 });
+  const running = Array.from({ length: 3 }, () => s.post());
+  await until(() => s.counts().web === 3);
+  assert.equal((await s.state()).web_active, 3);
+  assert.equal((await s.post()).headers.get("x-codex-proxy-fallback"), "web_busy");
+  release();
+  assert.ok((await Promise.all(running)).every(r => r.headers.get("x-codex-proxy-backend") === "web"));
+  assert.equal((await s.state()).web_active, 0);
+  assert.equal((await s.state()).cooldown_until, null);
+});
+test("an in-flight success cannot erase a concurrent rate-limit cooldown", async t => {
+  let calls = 0, release!: () => void; const wait = new Promise<void>(resolve => { release = resolve; });
+  const s = await setup(t, async url => {
+    if (url.endsWith("/health")) return ok();
+    if (++calls === 1) { await wait; return Response.json(completed); }
+    return Response.json({ error: { code: "web_rate_limited" } }, { status: 429 });
+  }, { ...settings, web_concurrency: 3 });
+  const first = s.post(); await until(() => calls === 1);
+  assert.equal((await s.post()).headers.get("x-codex-proxy-fallback"), "web_rate_limited");
+  release(); await first;
+  assert.equal((await s.post()).headers.get("x-codex-proxy-fallback"), "web_cooldown");
+  assert.equal(calls, 2);
+});
+test("cancelling one concurrent request releases only its own slot and causes no global cooldown", async t => {
+  const pending: (() => void)[] = [];
+  const s = await setup(t, async (url, init) => {
+    if (url.endsWith("/health")) return ok();
+    await new Promise<void>((resolve, reject) => {
+      pending.push(resolve); init.signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+    });
+    return Response.json(completed);
+  }, { ...settings, web_concurrency: 2 });
+  const abort = new AbortController();
+  const first = s.post(prompt, undefined, "/v1/chat/completions", abort.signal).catch(() => undefined);
+  const second = s.post(); await until(() => pending.length === 2);
+  abort.abort(); await first;
+  for (let i = 0; i < 100 && (await s.state()).web_active !== 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal((await s.state()).web_active, 1); assert.equal((await s.state()).cooldown_until, null);
+  const third = s.post(); await until(() => pending.length === 3);
+  assert.equal((await s.post()).headers.get("x-codex-proxy-fallback"), "web_busy");
+  pending.forEach(resolve => resolve()); await Promise.all([second, third]);
+  assert.equal((await s.state()).web_active, 0);
+});
 test("SSE handles split Unicode bytes", async () => {
   const bytes = new TextEncoder().encode('data: {"type":"test","text":"你好"}\n\n');
   const body = new ReadableStream<Uint8Array>({ start(controller) { for (const byte of bytes) controller.enqueue(new Uint8Array([byte])); controller.close(); } });
@@ -177,6 +229,14 @@ test("mode switch follows the configuration symlink and survives router recreati
   }
   const invalid = await fetch(url, { method: "PUT", headers: { "content-type": "application/json" }, body: '{"mode":"invalid"}' });
   assert.equal(invalid.status, 400); assert.equal(JSON.parse(readFileSync(file, "utf8")).mode, "auto");
+  for (const n of [3, 5, 1]) {
+    const r = await fetch(url, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ web_concurrency: n }) });
+    assert.equal(r.status, 200); assert.equal((await r.json() as any).web_concurrency, n);
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).mode, "auto");
+  }
+  for (const n of [0, 6, 1.5, "3"]) {
+    assert.equal((await fetch(url, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ web_concurrency: n }) })).status, 400);
+  }
   const fresh = express(); fresh.use(createWebRouter()); const restarted = createServer(fresh);
   await new Promise<void>(resolve => restarted.listen(0, "127.0.0.1", resolve));
   t.after(() => { restarted.closeAllConnections(); restarted.close(); });

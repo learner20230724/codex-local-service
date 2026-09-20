@@ -3,5 +3,6 @@
   "web_base_url": "http://127.0.0.1:3468",
   "web_model": "chatgpt-web/light",
   "web_timeout_ms": 120000,
-  "cooldown_seconds": 60
+  "cooldown_seconds": 60,
+  "web_concurrency": 1
 }

@@ -23,6 +23,7 @@ defaults = {
     'CODEX_PROXY_INIT_TIMEOUT_MS': '30000',
     'CODEX_PROXY_TURN_START_TIMEOUT_MS': '30000',
     'CODEX_PROXY_DEFAULT_MODEL': config['model'],
+    'CODEX_PROXY_STATS_FILE': '/var/lib/codex-proxy/stats/daily.json',
 }
 for name, value in defaults.items():
     env.setdefault(name, value)

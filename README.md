@@ -4,6 +4,8 @@
 
 现支持可选的 **ChatGPT 网页临时聊天优先、Codex 备用**：同一入口用 `codex-proxyctl mode auto|web|codex` 切换，普通文本与流式请求自动调配。新增[无浏览器 HTTP 通道](docs/http-web.md)，复用已有网页登录，调用 GPT-6 Astra＋轻量思考；正常推理无需 Chrome 或虚拟屏幕。两种网页传输均强制临时聊天和非个性化。接入、切换边界和资源检查见 [网页通道说明](docs/web-routing.md)。
 
+`codex-proxyctl stats` 查看按天持久保存的网页/Codex 调用次数、成功/失败/取消、回退及 Token 用量；实报与估算分开显示。HTTP 网页并发可通过 `codex-proxyctl concurrency 1`～`5` 调整，超额请求继续回退。详见[每日统计与并发](docs/daily-stats.md)。
+
 基于 [mehdic/codex-proxy](https://github.com/mehdic/codex-proxy) `0.4.8`，固定提交 `da828dafa0bb98a932e022edb608e6b35f0a8d9b`，保留原有 MIT 许可及本机加固补丁。仓库包含可构建的上游源码，不包含账号凭据、代理密钥、业务数据或 node_modules。
 
 ```text
