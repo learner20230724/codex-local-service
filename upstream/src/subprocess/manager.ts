@@ -12,6 +12,7 @@
  * explicit session semantics.
  */
 
+import { CodexSearch, type SearchInfo, type SearchCall, type Citation } from "../adapter/search.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -63,6 +64,9 @@ export interface CodexSubprocessOptions {
 
 export interface TurnResult {
   text: string;
+  search?: SearchInfo;
+  searchCalls?: SearchCall[];
+  annotations?: Citation[];
   turnId: string;
   threadId: string;
   usage: TokenUsageBreakdown | null;
@@ -106,7 +110,7 @@ export class CodexSubprocess {
       "computer_use", "image_generation", "view_image", "memory_tool", "memories",
       "hooks", "codex_hooks", "plugin_hooks", "skill_search", "tool_search"];
     for (const feature of disabled) args.push("-c", `features.${feature}=false`);
-    args.push("-c", "features.skip_host_skill_discovery=true", "-c", 'web_search="disabled"',
+    args.push("-c", "features.skip_host_skill_discovery=true", "-c", 'web_search="live"',
       "-c", "project_doc_max_bytes=0", "-c", 'model_reasoning_effort="medium"',
       "-c", 'model_verbosity="low"');
     for (const name of JSON.parse(process.env.LEARNING_DISABLED_MCP || "[]")) {
@@ -205,7 +209,7 @@ export class CodexSubprocess {
       approvalPolicy: CONFIG.codexApprovalPolicy,
       sandbox: CONFIG.codexSandbox,
       ephemeral,
-      baseInstructions: options.instructions || null,
+      baseInstructions: [options.instructions, "When using web search, cite original source URLs as Markdown links in prose answers. Preserve the requested output format, including JSON."].filter(Boolean).join("\n"),
       experimentalRawEvents: false,
       persistExtendedHistory: false,
     }, options.initTimeoutMs || CONFIG.initTimeoutMs);
@@ -231,9 +235,17 @@ export class CodexSubprocess {
     if (this.dead) throw new CodexProxyError("codex", "app-server process is dead", { detail: this.stderr });
 
     let tokenUsage: TokenUsageBreakdown | null = null;
+    const search = new CodexSearch();
 
     // Collect assistant text from streamed deltas
     let assistantText = "";
+    let visibleText = "", heldCitation = false;
+    const emitText = (delta: string) => {
+      if (heldCitation) return;
+      const marker = delta.indexOf("");
+      if (marker >= 0) { delta = delta.slice(0, marker); heldCitation = true; }
+      if (delta) { visibleText += delta; deltaCallback?.(delta); }
+    };
 
     let timeout: NodeJS.Timeout;
     let handler: (method: string, params: unknown) => void;
@@ -251,6 +263,7 @@ export class CodexSubprocess {
         const p = params as Record<string, unknown>;
         if (p.threadId !== threadId) return;
         trace("subprocess.notification.dispatch", { instanceId: this.instanceId, threadId, method, params });
+        search.observe(method, params);
         notificationCallback?.(method, params);
 
         switch (method) {
@@ -258,7 +271,7 @@ export class CodexSubprocess {
             const delta = extractDeltaText(p) || (p as unknown as AgentMessageDeltaNotification).delta;
             assistantText += delta;
             trace("subprocess.agent_delta", { instanceId: this.instanceId, threadId, delta, assistantTextLength: assistantText.length });
-            deltaCallback?.(delta);
+            emitText(delta);
             break;
           }
           case "item/completed": {
@@ -269,7 +282,7 @@ export class CodexSubprocess {
               const delta = completedText.startsWith(previousText)
                 ? completedText.slice(previousText.length)
                 : completedText;
-              if (delta) deltaCallback?.(delta);
+              if (delta) emitText(delta);
             }
             assistantText = nextText;
             break;
@@ -298,7 +311,12 @@ export class CodexSubprocess {
               }
             }
 
+            for (const item of tc.turn.items || []) search.observe("item/completed", { item });
+            assistantText = search.finish(assistantText);
+            if (assistantText.startsWith(visibleText) && assistantText.length > visibleText.length)
+              deltaCallback?.(assistantText.slice(visibleText.length));
             const result = {
+              search: search.info, searchCalls: [...search.calls.values()], annotations: search.annotations,
               text: assistantText,
               turnId: tc.turn.id,
               threadId,

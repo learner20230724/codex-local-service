@@ -171,6 +171,8 @@ test("turnResultToResponseObject includes output_text and output_text convenienc
   };
   const response = turnResultToResponseObject(turn, "gpt-5.5");
   assert.equal(response.status, "completed");
+  assert.equal(response.output[0].type, "message");
+  if (response.output[0].type !== "message") throw new Error("Expected assistant message first");
   assert.equal(response.output[0].content[0].type, "output_text");
   assert.equal((response.output[0].content[0] as { type: "output_text"; text: string }).text, "OK");
   assert.equal(response.output_text, "OK");

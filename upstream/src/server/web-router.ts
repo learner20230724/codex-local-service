@@ -1,3 +1,4 @@
+import { chatAnnotations, responseAnnotations, emptySearch } from "../adapter/search.js";
 /** Web-first inference routing. Never retry after emitting a response to the caller. */
 import { Router, type Response as ExpressResponse } from "express";
 import { readFileSync, writeFileSync, renameSync, realpathSync } from "node:fs";
@@ -210,13 +211,13 @@ export function createWebRouter(deps: { readSettings?: () => RoutingSettings; fe
         if (result.status !== "completed") throw new WebError(502, "web_response_incomplete");
         commit(); succeeded(); recordWebCompletion(res, body, result);
         res.json(chat ? { id: result.id || `chatcmpl-${randomUUID()}`, object: "chat.completion", created: result.created_at || Math.floor(Date.now()/1000),
-          model: result.model || model, choices: [{ index: 0, message: { role: "assistant", content: textOf(result) }, finish_reason: "stop" }], usage: chatUsage(result.usage) } : result);
+          model: result.model || model, choices: [{ index: 0, message: { role: "assistant", content: textOf(result), annotations: chatAnnotations(responseAnnotations(result)) }, finish_reason: "stop" }], search: result.search || emptySearch(), usage: chatUsage(result.usage) } : result);
       } else {
         if (!upstream.body) throw new WebError(502, "web_empty_stream");
         let committed = false; let completed = false; const pending: any[] = []; let pendingSize = 0;
         const id = `chatcmpl-${randomUUID()}`; const created = Math.floor(Date.now()/1000);
-        const chunk = (delta: any, finish: string | null = null, usage?: any) => res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model,
-          choices: usage ? [] : [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage: chatUsage(usage) } : {}) })}\n\n`);
+        const chunk = (delta: any, finish: string | null = null, usage?: any, search?: any) => res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model,
+          choices: usage ? [] : [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage: chatUsage(usage) } : {}), ...(search ? { search } : {}) })}\n\n`);
         for await (const event of sseEvents(upstream.body)) {
           if (event.type === "error" || event.type === "response.failed" || event.type === "response.incomplete")
             throw responseError(event.response || { error: event.error || event }) || new WebError(502, "web_stream_failed");
@@ -241,7 +242,7 @@ export function createWebRouter(deps: { readSettings?: () => RoutingSettings; fe
           if (event.type === "response.completed") {
             completed = true;
             recordWebCompletion(res, body, event.response);
-            if (chat) { chunk({}, "stop"); if (body.stream_options?.include_usage) chunk({}, null, event.response?.usage); res.write("data: [DONE]\n\n"); }
+            if (chat) { chunk({ annotations: chatAnnotations(responseAnnotations(event.response)) }, "stop", undefined, event.response.search || emptySearch()); if (body.stream_options?.include_usage) chunk({}, null, event.response?.usage); res.write("data: [DONE]\n\n"); }
             break;
           }
         }

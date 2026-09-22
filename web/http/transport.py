@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Single-account ChatGPT HTTP transport; no browser, tools, account pool or history writes.
+"""Single-account ChatGPT HTTP transport; no browser, local tools, account pool or history writes.
 
 Request preparation follows yukkcat/chatgpt2api d58db04. WebSocket handoff framing
 follows suphotP/chatgpt-api f998a6d (MIT); see README.md and UPSTREAM_NOTICE.
@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from curl_cffi import requests
 import websocket
 
+from search import Search
 from pow import build_legacy_requirements_token, build_proof_token, parse_pow_resources
 from turnstile import solve_turnstile_token
 
@@ -151,6 +152,7 @@ class Answer:
     def __init__(self, effort: str, input_ids=()):
         self.effort, self.text, self.message_id = effort, "", None
         self.input_ids = set(input_ids)
+        self.search = Search()
         self.finished, self.verified = False, False
 
     def accept(self, event: dict) -> str:
@@ -159,6 +161,7 @@ class Answer:
         message = event.get("message") or {}
         if message.get("id") in self.input_ids:
             return ""
+        self.search.observe(message)
         if message.get("author", {}).get("role") != "assistant" or message.get("channel") not in (None, "final"):
             return ""
         if message.get("content", {}).get("content_type") != "text" or message.get("recipient", "all") != "all":

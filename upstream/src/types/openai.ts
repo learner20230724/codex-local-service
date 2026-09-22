@@ -1,3 +1,4 @@
+import type { SearchInfo, SearchCall } from "../adapter/search.js";
 /**
  * OpenAI-compatible API types for chat completions and responses.
  */
@@ -77,6 +78,7 @@ export interface ContentPart {
 }
 
 export interface ChatCompletionResponse {
+  search?: SearchInfo;
   id: string;
   object: "chat.completion";
   created: number;
@@ -87,7 +89,7 @@ export interface ChatCompletionResponse {
 
 export interface ChatCompletionChoice {
   index: number;
-  message: { role: "assistant"; content: string | null; tool_calls?: ChatCompletionToolCall[] };
+  message: { role: "assistant"; content: string | null; tool_calls?: ChatCompletionToolCall[]; annotations?: ResponseAnnotation[] };
   finish_reason: "stop" | "length" | "tool_calls" | null;
 }
 
@@ -101,6 +103,7 @@ export interface ChatCompletionToolCall {
 }
 
 export interface ChatCompletionChunk {
+  search?: SearchInfo;
   id: string;
   object: "chat.completion.chunk";
   created: number;
@@ -111,7 +114,7 @@ export interface ChatCompletionChunk {
 
 export interface ChatCompletionChunkChoice {
   index: number;
-  delta: { role?: "assistant"; content?: string; tool_calls?: Array<ChatCompletionToolCall & { index: number }> };
+  delta: { annotations?: ResponseAnnotation[]; role?: "assistant"; content?: string; tool_calls?: Array<ChatCompletionToolCall & { index: number }> };
   finish_reason: "stop" | "length" | "tool_calls" | null;
 }
 
@@ -245,12 +248,13 @@ export type ResponseContentPart =
   | { type: string; [key: string]: unknown };
 
 export interface ResponseObject {
+  search?: SearchInfo;
   id: string;
   object: "response";
   created_at: number;
   model: string;
   status: "completed" | "failed" | "in_progress";
-  output: ResponseOutputItem[];
+  output: (ResponseOutputItem | SearchCall)[];
   output_text?: string;
   usage?: ResponseUsage;
   error?: { message: string; code: string } | null;

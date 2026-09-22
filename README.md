@@ -8,6 +8,8 @@
 
 基于 [mehdic/codex-proxy](https://github.com/mehdic/codex-proxy) `0.4.8`，固定提交 `da828dafa0bb98a932e022edb608e6b35f0a8d9b`，保留原有 MIT 许可及本机加固补丁。仓库包含可构建的上游源码，不包含账号凭据、代理密钥、业务数据或 node_modules。
 
+HTTP 网页与 Codex 备用均支持联网搜索。返回结果新增实际搜索状态、原始来源列表和标准引用注释，Chat / Responses 的普通与流式接口均支持，原有正文位置保留。详见[搜索字段与接入](docs/search-api.md)。
+
 ```text
 项目后端 / OpenAI SDK
         │ HTTP + 本机 Bearer 密钥

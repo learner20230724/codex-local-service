@@ -23,9 +23,12 @@ unsupported verification fail to the gateway's normal Codex fallback.
 
 ChatGPT may still invoke its own hosted web search while answering a plain text
 request. This was observed in real upstream `web.run` events without explicit
-search flags. The current adapter forwards final text, not search progress or
-complete citation metadata; explicit API tool declarations remain unsupported.
-See [search validation](../../docs/search-validation.md).
+search flags. The adapter now forwards allowlisted search queries, original source
+URLs/titles and citation annotations, and resolves internal citation markers to
+Markdown links. Late citation metadata is buffered without changing already-sent
+text. Explicit API tool declarations remain unsupported on the web transport;
+Codex fallback now has hosted live search enabled. See [search API fields](../../docs/search-api.md)
+and [search validation](../../docs/search-validation.md).
 
 All conversation requests set `history_and_training_disabled=true` and
 `temporary_chat_requests_personalization=false`, use fresh parent/message IDs,

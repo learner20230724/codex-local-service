@@ -19,3 +19,7 @@ The official Codex CLI is separately installed and authenticated by the service 
 `web/upstream` is a Git submodule of [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web), version 5.0.8, pinned to `eaf4f09ae92d4dc4429fa597b0861663138f08f8`. Its MIT license and bundled third-party notices remain in that directory. Initialize it with `git submodule update --init --recursive`.
 
 `scripts/prepare-web.py` copies the pinned source to the ignored `.runtime/web` directory, adds the mandatory non-personalized Temporary Chat check from `web/privacy.ts`, uses the owned normal-Chrome lifecycle from `web/browser-host.ts`, sanitizes exported browser state, and suppresses the Codex-specific local-tools warning for plain inference. The Chrome connection uses the dedicated sign-in profile and loopback CDP only after manual authentication ends; task cleanup closes the owned process. It does not run upstream setup, install Codex routes, import Codex OAuth credentials, or enable the full tool harness. Bun and Chromium are separately installed runtime dependencies; their licenses apply.
+
+## 2026-09-22 本地搜索适配
+
+主代理启用 Codex 托管 live 搜索，新增来源与引用适配、两类接口及 SSE 的搜索元数据。HTTP 网页 worker 新增允许列表元数据解析与引用链接转换。未修改宿主机工具执行限制，未包含凭据或上游搜索内容。接口与协议边界见 `docs/search-api.md`。

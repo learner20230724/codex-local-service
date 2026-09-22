@@ -243,3 +243,26 @@ test("mode switch follows the configuration symlink and survives router recreati
   const state = await fetch(`http://127.0.0.1:${(restarted.address() as { port: number }).port}/routing`);
   assert.equal((await state.json() as any).mode, "auto");
 });
+
+test("search and citations survive JSON and SSE on both public endpoints", async t => {
+  const annotation = { type: "url_citation", url: "https://example.com", title: "Example", start_index: 0, end_index: 7 };
+  const result = { ...completed, search: { enabled: true, performed: true, queries: ["example"], sources: [{ type: "url", url: "https://example.com", title: "Example" }], sources_complete: false },
+    output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "Example", annotations: [annotation] }] },
+      { type: "web_search_call", id: "s", status: "completed", action: { type: "search", query: "example" } }] };
+  for (const streaming of [false, true]) for (const chat of [false, true]) {
+    const events = [{ type: "response.created", response: { output: [] } }, { type: "response.output_text.delta", delta: "Example" },
+      { type: "response.output_text.annotation.added", annotation }, { type: "response.completed", response: result }];
+    const s = await setup(t, url => url.endsWith("/health") ? ok() : streaming ? stream(events) : Response.json(result));
+    const r = await s.post({ ...prompt, input: "hello", stream: streaming } as any, undefined, chat ? "/v1/chat/completions" : "/v1/responses");
+    if (!streaming) {
+      const value: any = await r.json(); assert.deepEqual(value.search, result.search);
+      assert.equal(chat ? value.choices[0].message.annotations[0].url_citation.url : value.output[0].content[0].annotations[0].url, annotation.url);
+    } else {
+      const frames = (await r.text()).split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+      const final = chat ? frames.find(e => e.search) : frames.find(e => e.type === "response.completed").response;
+      assert.deepEqual(final.search, result.search);
+      assert.equal(chat ? final.choices[0].delta.annotations[0].url_citation.url : final.output[0].content[0].annotations[0].url, annotation.url);
+    }
+    assert.equal(s.counts().codex, 0);
+  }
+});

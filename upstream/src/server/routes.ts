@@ -1,3 +1,4 @@
+import { chatAnnotations, emptySearch, searchCompletionEvents } from "../adapter/search.js";
 /**
  * Express route handlers for the codex-proxy.
  */
@@ -48,7 +49,6 @@ import { completeStats, selectStatsBackend } from "./daily-stats.js";
 import { pricingSnapshot } from "./pricing.js";
 import type { ChatCompletionRequest, ResponseRequest, ModelObject, ModelListResponse } from "../types/openai.js";
 import { attachPhaseTracker } from "./phase-tracker.js";
-import { createProgressChunk, hasRenderableAssistantContent } from "./progress-utils.js";
 import { trace, traceError } from "./trace.js";
 
 type EndpointName = "chat_completions" | "responses";
@@ -206,9 +206,8 @@ export function createRouter(): Router {
           lastStreamWrite = next;
         }, (count) => {
           const phase = phaseTracker.poll();
-          if (phase && hasRenderableAssistantContent(phase.text)) {
-            return chunkToSSE(createProgressChunk(streamId, model, `${phase.text}\n`));
-          }
+          // Status must not alter answer text or citation offsets.
+          if (phase) return `: ${JSON.stringify({ phase: phase.label })}\n\n`;
           return createSseKeepaliveComment(requestId, count);
         });
 
@@ -235,13 +234,17 @@ export function createRouter(): Router {
           for (let i = 0; i < proxyToolCalls.length; i++) {
             const toolCall = makeToolCall(result.turnId, proxyToolCalls[i].name, proxyToolCalls[i].arguments, i);
             const finishReason = i === proxyToolCalls.length - 1 ? "tool_calls" : null;
-            safeWrite(chunkToSSE(makeChatToolCallChunk(streamId, model, toolCall, i, finishReason)));
+            const chunk = makeChatToolCallChunk(streamId, model, toolCall, i, finishReason);
+            if (finishReason) chunk.search = result.search || emptySearch();
+            safeWrite(chunkToSSE(chunk));
           }
         } else {
           if (emulateTools && result.text) {
             safeWrite(chunkToSSE(makeChatCompletionChunk(streamId, model, result.text)));
           }
           const finalChunk = makeChatCompletionChunk(streamId, model, null, "stop", turnResultUsageToOpenAI(result));
+          finalChunk.search = result.search || emptySearch();
+          finalChunk.choices[0].delta.annotations = chatAnnotations(result.annotations);
           safeWrite(chunkToSSE(finalChunk));
         }
         safeWrite(SSE_DONE);
@@ -401,9 +404,8 @@ export function createRouter(): Router {
           lastStreamWrite = next;
         }, (count) => {
           const phase = phaseTracker.poll();
-          if (phase && hasRenderableAssistantContent(phase.text)) {
-            return makeResponseTextDeltaEvent(0, 0, `${phase.text}\n`, { responseId: respId, itemId: outputId });
-          }
+          // Status must not alter answer text or citation offsets.
+          if (phase) return `: ${JSON.stringify({ phase: phase.label })}\n\n`;
           return createSseKeepaliveComment(requestId, count);
         });
 
@@ -423,6 +425,9 @@ export function createRouter(): Router {
         annotateTurnUsage(result, prompt, model);
         completeStats(res, result.usage, Boolean(result.usageEstimated));
 
+        for (const event of searchCompletionEvents(result.searchCalls || [], result.annotations || [], outputId))
+          safeWrite(makeResponseStreamEvent(event.type, event));
+
         // output_text.done
         safeWrite(makeResponseTextDoneEvent(0, 0, result.text, { responseId: respId, itemId: outputId }));
         lastStreamWrite = Date.now();
@@ -431,7 +436,7 @@ export function createRouter(): Router {
           output_index: 0,
           content_index: 0,
           item_id: outputId,
-          part: { type: "output_text", text: result.text },
+          part: { type: "output_text", text: result.text, annotations: result.annotations || [] },
         }));
         lastStreamWrite = Date.now();
 
@@ -440,7 +445,7 @@ export function createRouter(): Router {
           output_index: 0,
           item: {
             type: "message", id: outputId, role: "assistant", status: "completed",
-            content: [{ type: "output_text", text: result.text }],
+            content: [{ type: "output_text", text: result.text, annotations: result.annotations || [] }],
           },
         }));
         lastStreamWrite = Date.now();

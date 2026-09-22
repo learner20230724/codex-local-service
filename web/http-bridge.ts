@@ -1,3 +1,4 @@
+import { httpResult as result, httpSearchEvents } from "./http-output";
 /** Minimal private HTTP worker host. Browser/Playwright packages are not imported. */
 import { readFileSync, statSync } from "node:fs";
 import { timingSafeEqual, randomUUID } from "node:crypto";
@@ -29,13 +30,6 @@ function credentialStatus(): { ready: boolean; code?: string } {
     return { ready: state.temporary_chat === true && state.personalization === false };
   } catch { return { ready: false, code: "web_session_unavailable" }; }
 }
-function result(id: string, created: number, text: string, effort: string) {
-  return { id, object: "response", created_at: created, status: "completed", model, store: false,
-    output: [{ id: `msg_${id}`, type: "message", role: "assistant", status: "completed", phase: "final_answer",
-      content: [{ type: "output_text", text, annotations: [] }] }],
-    metadata: { backend: "chatgpt-web", transport: "http", upstream_model: "gpt-6-astra-wm", thinking_effort: effort },
-  };
-}
 const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.CODEX_WEB_PORT || 3468),
   idleTimeout: 0, maxRequestBodySize: 2 * 1024 * 1024,
   async fetch(req) {
@@ -63,6 +57,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.CODEX
     const signal = AbortSignal.any([req.signal, cancel.signal, shutdown.signal]);
     const events = runHttpWorker(body, { python: process.env.CODEX_WEB_HTTP_PYTHON || "/opt/codex-proxy-web/http-venv/bin/python", worker, signal });
     const id = `resp_${randomUUID()}`, created = Math.floor(Date.now()/1000);
+    let completedEvent: any = {};
     let text = "", effort = "min", sequence = 0, cancelled = false, itemStarted = false;
     const packet = (value: any) => new TextEncoder().encode(`event: ${value.type}\ndata: ${JSON.stringify({ ...value, sequence_number: sequence++ })}\n\n`);
     let cleaning: Promise<void> | undefined;
@@ -71,9 +66,9 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.CODEX
       try {
         for await (const event of events) {
           if (event.type === "delta") text += event.text;
-          else if (event.type === "done") effort = event.thinking_effort;
+          else if (event.type === "done") { effort = event.thinking_effort; completedEvent = event; }
         }
-        completed++; return Response.json(result(id, created, text, effort));
+        completed++; return Response.json(result(id, created, text, effort, completedEvent));
       } catch (error) { return errorResponse(error instanceof HttpWebError ? error.status : 502, error instanceof HttpWebError ? error.code : "web_transport_failed"); }
       finally { await cleanup(); }
     }
@@ -95,9 +90,11 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.CODEX
             text += event.text;
             controller.enqueue(packet({ type: "response.output_text.delta", item_id: `msg_${id}`, output_index: 0, content_index: 0, delta: event.text }));
           } else {
+            completedEvent = event;
             effort = event.thinking_effort; completed++;
+            for (const searchEvent of httpSearchEvents(id, event)) controller.enqueue(packet(searchEvent));
             controller.enqueue(packet({ type: "response.output_text.done", item_id: `msg_${id}`, output_index: 0, content_index: 0, text }));
-            const response = result(id, created, text, effort);
+            const response = result(id, created, text, effort, completedEvent);
             controller.enqueue(packet({ type: "response.content_part.done", item_id: `msg_${id}`, output_index: 0, content_index: 0,
               part: response.output[0].content[0] }));
             controller.enqueue(packet({ type: "response.output_item.done", output_index: 0, item: response.output[0] }));

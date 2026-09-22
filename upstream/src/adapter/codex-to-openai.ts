@@ -1,3 +1,4 @@
+import { chatAnnotations, emptySearch } from "./search.js";
 /**
  * Adapter: Codex app-server output → OpenAI API response shapes.
  *
@@ -127,10 +128,11 @@ export function turnResultToChatCompletion(
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content: result.text },
+        message: { role: "assistant", content: result.text, annotations: chatAnnotations(result.annotations) },
         finish_reason: result.finishReason === "error" ? "stop" : result.finishReason,
       },
     ],
+    search: result.search || emptySearch(),
     usage: turnResultUsageToOpenAI(result),
   };
 }
@@ -164,6 +166,7 @@ export function turnResultToToolCallChatCompletion(
         finish_reason: "tool_calls",
       },
     ],
+    search: result.search || emptySearch(),
     usage: turnResultUsageToOpenAI(result),
   };
 }
@@ -192,6 +195,7 @@ export function turnResultToSpecificToolCallChatCompletion(
         finish_reason: "tool_calls",
       },
     ],
+    search: result.search || emptySearch(),
     usage: turnResultUsageToOpenAI(result),
   };
 }
@@ -217,6 +221,7 @@ export function turnResultToMultiToolCallChatCompletion(
         finish_reason: "tool_calls",
       },
     ],
+    search: result.search || emptySearch(),
     usage: turnResultUsageToOpenAI(result),
   };
 }
@@ -328,7 +333,7 @@ export function turnResultToResponseObject(
     id: opts.outputId || `msg_${uuid()}`,
     role: "assistant",
     status: "completed",
-    content: [{ type: "output_text", text: result.text }],
+    content: [{ type: "output_text", text: result.text, annotations: result.annotations || [] }],
   };
 
   return {
@@ -337,7 +342,8 @@ export function turnResultToResponseObject(
     created_at: Math.floor(Date.now() / 1000),
     model,
     status: result.finishReason === "error" ? "failed" : "completed",
-    output: [outputItem],
+    output: [outputItem, ...(result.searchCalls || [])],
+    search: result.search || emptySearch(),
     output_text: result.text,
     usage: turnResultUsageToResponseUsage(result),
     error: result.finishReason === "error"
